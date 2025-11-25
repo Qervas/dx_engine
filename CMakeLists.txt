@@ -37,13 +37,32 @@ add_executable(dx_engine
     src/RHI/PipelineState.h
     src/RHI/PipelineState.cpp
 
+    # Renderer
+    src/Renderer/Camera.h
+    src/Renderer/Camera.cpp
+    src/Renderer/Mesh.h
+    src/Renderer/Mesh.cpp
+    src/Renderer/TextureLoader.h
+    src/Renderer/TextureLoader.cpp
+    src/Renderer/ProceduralTexture.h
+    src/Renderer/ProceduralTexture.cpp
+    src/Renderer/Material.h
+    src/Renderer/Material.cpp
+    src/Renderer/Light.h
+
     # Platform
     src/Platform/Window.h
     src/Platform/Window.cpp
 )
 
+# Find packages
+find_package(Stb REQUIRED)
+
 # Define UNICODE for wide character support
 target_compile_definitions(dx_engine PRIVATE UNICODE _UNICODE)
+
+# Include directories
+target_include_directories(dx_engine PRIVATE ${Stb_INCLUDE_DIR})
 
 # Link DirectX 12 libraries
 target_link_libraries(dx_engine

@@ -3,28 +3,39 @@
 #include "RHI/CommandList.h"
 #include "RHI/SwapChain.h"
 #include "RHI/Buffer.h"
+#include "RHI/Texture.h"
 #include "RHI/Shader.h"
 #include "RHI/RootSignature.h"
 #include "RHI/PipelineState.h"
+#include "RHI/DescriptorHeap.h"
+#include "Renderer/Camera.h"
+#include "Renderer/Mesh.h"
+#include "Renderer/Material.h"
+#include "Renderer/Light.h"
+#include "Renderer/ProceduralTexture.h"
 #include "Platform/Window.h"
 #include <memory>
+#include <DirectXMath.h>
+
+using namespace DirectX;
 
 // Application constants
 constexpr uint32_t WINDOW_WIDTH = 1280;
 constexpr uint32_t WINDOW_HEIGHT = 720;
 
-// Vertex structure
-struct Vertex
+// MVP constant buffer structure
+struct MVPConstants
 {
-    float position[3];
-    float color[3];
+    XMFLOAT4X4 model;
+    XMFLOAT4X4 view;
+    XMFLOAT4X4 projection;
 };
 
 class Application
 {
 public:
     Application()
-        : m_window(L"DirectX 12 Engine - Triangle", WINDOW_WIDTH, WINDOW_HEIGHT)
+        : m_window(L"DirectX 12 Engine - PBR with Normal Mapping", WINDOW_WIDTH, WINDOW_HEIGHT)
     {
     }
 
@@ -75,50 +86,200 @@ public:
             return false;
         }
 
+        // Initialize camera
+        m_camera = std::make_unique<Camera>();
+        m_camera->SetPosition(XMFLOAT3(0.0f, 0.0f, -3.0f));
+        m_camera->SetPerspective(60.0f, (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT, 0.1f, 100.0f);
+
+        // Initialize scene lights
+        InitializeLights();
+
         return true;
     }
 
     bool InitializeRenderingResources()
     {
-        // Create vertex buffer
-        Vertex vertices[] =
-        {
-            { {  0.0f,  0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f } },  // Top (red)
-            { {  0.5f, -0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f } },  // Right (green)
-            { { -0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f } }   // Left (blue)
-        };
-
-        m_vertexBuffer = std::make_unique<Buffer>(m_device.get());
-        if (!m_vertexBuffer->Create(sizeof(vertices), sizeof(Vertex), BufferUsage::Upload, vertices))
+        // Create descriptor heap for SRVs
+        m_srvHeap = std::make_unique<DescriptorHeap>(m_device.get(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 100, true);
+        if (!m_srvHeap->Initialize())
         {
             return false;
         }
 
-        // Compile shaders
+        // Create cube mesh with tangents for normal mapping
+        m_mesh = std::unique_ptr<Mesh>(Mesh::CreateCubeWithTangents(m_device.get()));
+        if (!m_mesh)
+        {
+            return false;
+        }
+
+        // Create albedo (checkerboard) texture
+        const uint32_t texWidth = 256;
+        const uint32_t texHeight = 256;
+        auto checkerboardData = ProceduralTexture::GenerateCheckerboard(texWidth, texHeight, 32);
+
+        m_albedoTexture = std::make_unique<Texture>(m_device.get());
+        if (!m_albedoTexture->Create(texWidth, texHeight, DXGI_FORMAT_R8G8B8A8_UNORM, TextureUsage::ShaderResource))
+        {
+            return false;
+        }
+
+        // Create normal map (brick pattern)
+        auto normalMapData = ProceduralTexture::GenerateBrickNormalMap(texWidth, texHeight);
+
+        m_normalTexture = std::make_unique<Texture>(m_device.get());
+        if (!m_normalTexture->Create(texWidth, texHeight, DXGI_FORMAT_R8G8B8A8_UNORM, TextureUsage::ShaderResource))
+        {
+            return false;
+        }
+
+        // Upload both textures
+        // IMPORTANT: Upload buffers must stay alive until GPU finishes copying!
+        m_commandList->Reset();
+
+        // Create upload buffers OUTSIDE the command recording so they live until Flush()
+        Buffer albedoUploadBuffer(m_device.get());
+        if (!albedoUploadBuffer.Create(checkerboardData.size(), 0, BufferUsage::Upload, checkerboardData.data()))
+        {
+            return false;
+        }
+
+        Buffer normalUploadBuffer(m_device.get());
+        if (!normalUploadBuffer.Create(normalMapData.size(), 0, BufferUsage::Upload, normalMapData.data()))
+        {
+            return false;
+        }
+
+        // Upload albedo texture
+        m_commandList->TransitionBarrier(
+            m_albedoTexture->GetD3D12Resource(),
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            D3D12_RESOURCE_STATE_COPY_DEST
+        );
+
+        D3D12_TEXTURE_COPY_LOCATION albedoSrc = {};
+        albedoSrc.pResource = albedoUploadBuffer.GetD3D12Resource();
+        albedoSrc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        albedoSrc.PlacedFootprint.Offset = 0;
+        albedoSrc.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        albedoSrc.PlacedFootprint.Footprint.Width = texWidth;
+        albedoSrc.PlacedFootprint.Footprint.Height = texHeight;
+        albedoSrc.PlacedFootprint.Footprint.Depth = 1;
+        albedoSrc.PlacedFootprint.Footprint.RowPitch = texWidth * 4;
+
+        D3D12_TEXTURE_COPY_LOCATION albedoDst = {};
+        albedoDst.pResource = m_albedoTexture->GetD3D12Resource();
+        albedoDst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        albedoDst.SubresourceIndex = 0;
+
+        m_commandList->GetD3D12CommandList()->CopyTextureRegion(&albedoDst, 0, 0, 0, &albedoSrc, nullptr);
+
+        m_commandList->TransitionBarrier(
+            m_albedoTexture->GetD3D12Resource(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+        );
+
+        // Upload normal map
+        m_commandList->TransitionBarrier(
+            m_normalTexture->GetD3D12Resource(),
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            D3D12_RESOURCE_STATE_COPY_DEST
+        );
+
+        D3D12_TEXTURE_COPY_LOCATION normalSrc = {};
+        normalSrc.pResource = normalUploadBuffer.GetD3D12Resource();
+        normalSrc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        normalSrc.PlacedFootprint.Offset = 0;
+        normalSrc.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        normalSrc.PlacedFootprint.Footprint.Width = texWidth;
+        normalSrc.PlacedFootprint.Footprint.Height = texHeight;
+        normalSrc.PlacedFootprint.Footprint.Depth = 1;
+        normalSrc.PlacedFootprint.Footprint.RowPitch = texWidth * 4;
+
+        D3D12_TEXTURE_COPY_LOCATION normalDst = {};
+        normalDst.pResource = m_normalTexture->GetD3D12Resource();
+        normalDst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        normalDst.SubresourceIndex = 0;
+
+        m_commandList->GetD3D12CommandList()->CopyTextureRegion(&normalDst, 0, 0, 0, &normalSrc, nullptr);
+
+        m_commandList->TransitionBarrier(
+            m_normalTexture->GetD3D12Resource(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+        );
+
+        m_commandList->Close();
+
+        ID3D12CommandList* commandLists[] = { m_commandList->GetD3D12CommandList() };
+        m_commandQueue->ExecuteCommandLists(commandLists, 1);
+        m_commandQueue->Flush();
+        // Upload buffers are destroyed HERE, AFTER Flush() ensures GPU is done
+
+        // Create SRV for albedo texture
+        DescriptorHandle albedoSrvHandle = m_srvHeap->Allocate();
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Texture2D.MipLevels = 1;
+        srvDesc.Texture2D.MostDetailedMip = 0;
+
+        m_device->GetD3D12Device()->CreateShaderResourceView(
+            m_albedoTexture->GetD3D12Resource(),
+            &srvDesc,
+            albedoSrvHandle.cpu
+        );
+
+        m_albedoTexture->SetSRV(albedoSrvHandle);
+
+        // Create SRV for normal map
+        DescriptorHandle normalSrvHandle = m_srvHeap->Allocate();
+        m_device->GetD3D12Device()->CreateShaderResourceView(
+            m_normalTexture->GetD3D12Resource(),
+            &srvDesc,
+            normalSrvHandle.cpu
+        );
+
+        m_normalTexture->SetSRV(normalSrvHandle);
+
+        // Create material
+        m_material = std::make_unique<Material>(m_device.get());
+        m_material->SetAlbedo(XMFLOAT3(1.0f, 1.0f, 1.0f));
+        m_material->SetMetallic(0.3f);
+        m_material->SetRoughness(0.7f);
+        m_material->SetAO(1.0f);
+        m_material->SetAlbedoTexture(m_albedoTexture.get(), albedoSrvHandle);
+        m_material->SetNormalTexture(m_normalTexture.get(), normalSrvHandle);
+
+        // Compile PBR shaders with normal mapping
         m_vertexShader = std::make_unique<Shader>();
-        if (!m_vertexShader->CompileFromFile(L"shaders/BasicVS.hlsl", "main", "vs_5_1"))
+        if (!m_vertexShader->CompileFromFile(L"shaders/PBRNormalVS.hlsl", "main", "vs_5_1"))
         {
             return false;
         }
 
         m_pixelShader = std::make_unique<Shader>();
-        if (!m_pixelShader->CompileFromFile(L"shaders/BasicPS.hlsl", "main", "ps_5_1"))
+        if (!m_pixelShader->CompileFromFile(L"shaders/PBRNormalPS.hlsl", "main", "ps_5_1"))
         {
             return false;
         }
 
-        // Create root signature
+        // Create PBR root signature with normal mapping
         m_rootSignature = std::make_unique<RootSignature>(m_device.get());
-        if (!m_rootSignature->CreateEmpty())
+        if (!m_rootSignature->CreateForPBRWithNormalMap())
         {
             return false;
         }
 
-        // Define input layout
+        // Define input layout with tangents
         D3D12_INPUT_ELEMENT_DESC inputElements[] =
         {
             { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-            { "COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+            { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+            { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+            { "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
         };
 
         D3D12_INPUT_LAYOUT_DESC inputLayout = {};
@@ -137,13 +298,48 @@ public:
             return false;
         }
 
+        // Create MVP constant buffer
+        m_mvpConstantBuffer = std::make_unique<Buffer>(m_device.get());
+        if (!m_mvpConstantBuffer->Create(sizeof(MVPConstants), 0, BufferUsage::Constant))
+        {
+            return false;
+        }
+
+        // Create scene lighting constant buffer
+        m_lightingConstantBuffer = std::make_unique<Buffer>(m_device.get());
+        if (!m_lightingConstantBuffer->Create(sizeof(SceneLightingData), 0, BufferUsage::Constant))
+        {
+            return false;
+        }
+
         return true;
+    }
+
+    void InitializeLights()
+    {
+        // Create 2 point lights
+        m_lights.resize(2);
+
+        // Light 1: White light on the right (reduced intensity)
+        m_lights[0].SetType(LightType::Point);
+        m_lights[0].SetPosition(XMFLOAT3(2.0f, 1.0f, -2.0f));
+        m_lights[0].SetColor(XMFLOAT3(1.0f, 1.0f, 1.0f));
+        m_lights[0].SetIntensity(2.0f);  // Reduced from 10.0
+        m_lights[0].SetRange(10.0f);
+
+        // Light 2: Blue light on the left (reduced intensity)
+        m_lights[1].SetType(LightType::Point);
+        m_lights[1].SetPosition(XMFLOAT3(-2.0f, 1.0f, -2.0f));
+        m_lights[1].SetColor(XMFLOAT3(0.3f, 0.5f, 1.0f));
+        m_lights[1].SetIntensity(1.5f);  // Reduced from 8.0
+        m_lights[1].SetRange(10.0f);
     }
 
     void Run()
     {
         while (m_window.ProcessMessages())
         {
+            Update();
             Render();
         }
 
@@ -151,27 +347,37 @@ public:
         m_commandQueue->Flush();
     }
 
-    void Shutdown()
+    void Update()
     {
-        // Shutdown in reverse order of initialization
-        if (m_commandQueue)
+        static float rotation = 0.0f;
+        rotation += 0.01f;
+
+        // Update model matrix (rotating cube)
+        XMMATRIX model = XMMatrixRotationY(rotation) * XMMatrixRotationX(rotation * 0.5f);
+
+        // Update MVP constant buffer
+        MVPConstants constants;
+        XMStoreFloat4x4(&constants.model, XMMatrixTranspose(model));
+        XMStoreFloat4x4(&constants.view, XMMatrixTranspose(m_camera->GetViewMatrix()));
+        XMStoreFloat4x4(&constants.projection, XMMatrixTranspose(m_camera->GetProjectionMatrix()));
+
+        m_mvpConstantBuffer->UpdateData(&constants, sizeof(MVPConstants));
+
+        // Update material constants
+        m_material->UpdateConstants();
+
+        // Update lighting constants
+        SceneLightingData lightingData = {};
+        lightingData.cameraPosition = m_camera->GetPosition();
+        lightingData.lightCount = static_cast<uint32_t>(m_lights.size());
+        for (uint32_t i = 0; i < m_lights.size(); ++i)
         {
-            m_commandQueue->Flush();
+            lightingData.lights[i] = m_lights[i].GetLightData();
         }
 
-        m_pipelineState.reset();
-        m_rootSignature.reset();
-        m_pixelShader.reset();
-        m_vertexShader.reset();
-        m_vertexBuffer.reset();
-        m_commandList.reset();
-        m_swapChain.reset();
-        m_commandQueue.reset();
-        m_device.reset();
-        m_window.Shutdown();
+        m_lightingConstantBuffer->UpdateData(&lightingData, sizeof(SceneLightingData));
     }
 
-private:
     void Render()
     {
         uint32_t backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
@@ -199,18 +405,37 @@ private:
             m_swapChain->GetWidth(),
             m_swapChain->GetHeight());
 
-        // Clear render target to dark blue
-        const float clearColor[] = { 0.1f, 0.2f, 0.4f, 1.0f };
+        // Clear render target
+        const float clearColor[] = { 0.02f, 0.02f, 0.02f, 1.0f };
         m_commandList->ClearRenderTargetView(rtv, clearColor);
 
-        // Set pipeline state and draw triangle
+        // Set pipeline state and root signature
         m_commandList->SetPipelineState(m_pipelineState->GetD3D12PipelineState());
         m_commandList->SetGraphicsRootSignature(m_rootSignature->GetD3D12RootSignature());
         m_commandList->SetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        D3D12_VERTEX_BUFFER_VIEW vbv = m_vertexBuffer->GetVertexBufferView();
-        m_commandList->SetVertexBuffers(0, 1, &vbv);
-        m_commandList->Draw(3, 0);
+        // Set descriptor heap
+        ID3D12DescriptorHeap* heaps[] = { m_srvHeap->GetD3D12DescriptorHeap() };
+        m_commandList->SetDescriptorHeaps(1, heaps);
+
+        // Bind resources
+        // Root param 0: MVP constant buffer (b0)
+        m_commandList->SetGraphicsRootConstantBufferView(0, m_mvpConstantBuffer->GetGPUVirtualAddress());
+
+        // Root param 1: Material constant buffer (b1)
+        m_commandList->SetGraphicsRootConstantBufferView(1, m_material->GetConstantBuffer()->GetGPUVirtualAddress());
+
+        // Root param 2: Lighting constant buffer (b2)
+        m_commandList->SetGraphicsRootConstantBufferView(2, m_lightingConstantBuffer->GetGPUVirtualAddress());
+
+        // Root param 3: Albedo texture (t0)
+        m_commandList->SetGraphicsRootDescriptorTable(3, m_albedoTexture->GetSRV().gpu);
+
+        // Root param 4: Normal map (t1)
+        m_commandList->SetGraphicsRootDescriptorTable(4, m_normalTexture->GetSRV().gpu);
+
+        // Draw cube
+        m_mesh->Draw(m_commandList.get());
 
         // Transition back buffer to present state
         m_commandList->TransitionBarrier(
@@ -227,24 +452,64 @@ private:
         m_commandQueue->ExecuteCommandLists(commandLists, 1);
 
         // Present
-        m_swapChain->Present(true);  // vsync enabled
+        m_swapChain->Present(true);
 
         // Wait for this frame to complete
         m_commandQueue->Flush();
     }
 
+    void Shutdown()
+    {
+        // Shutdown in reverse order of initialization
+        if (m_commandQueue)
+        {
+            m_commandQueue->Flush();
+        }
+
+        m_lightingConstantBuffer.reset();
+        m_mvpConstantBuffer.reset();
+        m_pipelineState.reset();
+        m_rootSignature.reset();
+        m_pixelShader.reset();
+        m_vertexShader.reset();
+        m_material.reset();
+        m_normalTexture.reset();
+        m_albedoTexture.reset();
+        m_mesh.reset();
+        m_srvHeap.reset();
+        m_camera.reset();
+        m_commandList.reset();
+        m_swapChain.reset();
+        m_commandQueue.reset();
+        m_device.reset();
+        m_window.Shutdown();
+    }
+
+private:
     Window m_window;
     std::unique_ptr<GraphicsDevice> m_device;
     std::unique_ptr<CommandQueue> m_commandQueue;
     std::unique_ptr<SwapChain> m_swapChain;
     std::unique_ptr<CommandList> m_commandList;
 
+    // Camera
+    std::unique_ptr<Camera> m_camera;
+
     // Rendering resources
-    std::unique_ptr<Buffer> m_vertexBuffer;
+    std::unique_ptr<DescriptorHeap> m_srvHeap;
+    std::unique_ptr<Mesh> m_mesh;
+    std::unique_ptr<Texture> m_albedoTexture;
+    std::unique_ptr<Texture> m_normalTexture;
+    std::unique_ptr<Material> m_material;
+    std::unique_ptr<Buffer> m_mvpConstantBuffer;
+    std::unique_ptr<Buffer> m_lightingConstantBuffer;
     std::unique_ptr<Shader> m_vertexShader;
     std::unique_ptr<Shader> m_pixelShader;
     std::unique_ptr<RootSignature> m_rootSignature;
     std::unique_ptr<PipelineState> m_pipelineState;
+
+    // Scene lights
+    std::vector<Light> m_lights;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)

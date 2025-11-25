@@ -14,6 +14,15 @@ public:
     // Create empty root signature (no parameters)
     bool CreateEmpty();
 
+    // Create root signature with CBV and texture (for textured rendering)
+    bool CreateWithTextureAndCBV();
+
+    // Create root signature for PBR rendering (MVP + Material + Lighting CBVs + texture)
+    bool CreateForPBR();
+
+    // Create root signature for PBR with normal mapping (MVP + Material + Lighting CBVs + albedo + normal textures)
+    bool CreateForPBRWithNormalMap();
+
     // Accessors
     ID3D12RootSignature* GetD3D12RootSignature() const { return m_rootSignature.Get(); }
 

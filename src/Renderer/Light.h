@@ -5,6 +5,9 @@
 
 using namespace DirectX;
 
+// Maximum number of lights supported
+constexpr uint32_t MAX_LIGHTS = 4;
+
 enum class LightType : uint32_t
 {
     Directional = 0,
@@ -34,7 +37,7 @@ struct SceneLightingData
     XMFLOAT3 cameraPosition;
     uint32_t lightCount;
 
-    LightData lights[4];    // Support up to 4 lights for now
+    LightData lights[MAX_LIGHTS];    // Support up to MAX_LIGHTS
 };
 
 class Light

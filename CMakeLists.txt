@@ -49,6 +49,17 @@ add_executable(dx_engine
     src/Renderer/Material.h
     src/Renderer/Material.cpp
     src/Renderer/Light.h
+    src/Renderer/SceneRenderer.h
+    src/Renderer/SceneRenderer.cpp
+
+    # Scene
+    src/Scene/Entity.h
+    src/Scene/MeshRenderer.h
+    src/Scene/Component.h
+    src/Scene/Scene.h
+    src/Scene/Scene.cpp
+    src/Scene/Transform.h
+    src/Scene/Transform.cpp
 
     # Platform
     src/Platform/Window.h

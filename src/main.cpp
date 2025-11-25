@@ -13,6 +13,10 @@
 #include "Renderer/Material.h"
 #include "Renderer/Light.h"
 #include "Renderer/ProceduralTexture.h"
+#include "Renderer/SceneRenderer.h"
+#include "Scene/Scene.h"
+#include "Scene/Transform.h"
+#include "Scene/MeshRenderer.h"
 #include "Platform/Window.h"
 #include <memory>
 #include <DirectXMath.h>
@@ -22,14 +26,6 @@ using namespace DirectX;
 // Application constants
 constexpr uint32_t WINDOW_WIDTH = 1280;
 constexpr uint32_t WINDOW_HEIGHT = 720;
-
-// MVP constant buffer structure
-struct MVPConstants
-{
-    XMFLOAT4X4 model;
-    XMFLOAT4X4 view;
-    XMFLOAT4X4 projection;
-};
 
 class Application
 {
@@ -93,6 +89,47 @@ public:
 
         // Initialize scene lights
         InitializeLights();
+
+        // Initialize scene system
+        if (!InitializeScene())
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    bool InitializeScene()
+    {
+        // Create the scene
+        m_scene = std::make_unique<Scene>();
+
+        // Create scene renderer
+        m_sceneRenderer = std::make_unique<SceneRenderer>(m_device.get());
+        if (!m_sceneRenderer->Initialize())
+        {
+            return false;
+        }
+
+        m_sceneRenderer->SetScene(m_scene.get());
+        m_sceneRenderer->SetCamera(m_camera.get());
+        m_sceneRenderer->SetLights(m_lights);
+        m_sceneRenderer->SetPipeline(m_rootSignature.get(), m_pipelineState.get());
+
+        // Create a cube entity
+        Entity cubeEntity = m_scene->CreateEntity("PBR Cube");
+
+        // Add Transform component
+        Transform* transform = m_scene->AddComponent<Transform>(cubeEntity);
+        transform->SetLocalPosition(0.0f, 0.0f, 0.0f);
+
+        // Add MeshRenderer component
+        MeshRenderer* meshRenderer = m_scene->AddComponent<MeshRenderer>(cubeEntity);
+        meshRenderer->mesh = m_mesh.get();
+        meshRenderer->material = m_material.get();
+
+        // Store the cube entity for animation
+        m_cubeEntity = cubeEntity;
 
         return true;
     }
@@ -298,20 +335,6 @@ public:
             return false;
         }
 
-        // Create MVP constant buffer
-        m_mvpConstantBuffer = std::make_unique<Buffer>(m_device.get());
-        if (!m_mvpConstantBuffer->Create(sizeof(MVPConstants), 0, BufferUsage::Constant))
-        {
-            return false;
-        }
-
-        // Create scene lighting constant buffer
-        m_lightingConstantBuffer = std::make_unique<Buffer>(m_device.get());
-        if (!m_lightingConstantBuffer->Create(sizeof(SceneLightingData), 0, BufferUsage::Constant))
-        {
-            return false;
-        }
-
         return true;
     }
 
@@ -352,30 +375,15 @@ public:
         static float rotation = 0.0f;
         rotation += 0.01f;
 
-        // Update model matrix (rotating cube)
-        XMMATRIX model = XMMatrixRotationY(rotation) * XMMatrixRotationX(rotation * 0.5f);
-
-        // Update MVP constant buffer
-        MVPConstants constants;
-        XMStoreFloat4x4(&constants.model, XMMatrixTranspose(model));
-        XMStoreFloat4x4(&constants.view, XMMatrixTranspose(m_camera->GetViewMatrix()));
-        XMStoreFloat4x4(&constants.projection, XMMatrixTranspose(m_camera->GetProjectionMatrix()));
-
-        m_mvpConstantBuffer->UpdateData(&constants, sizeof(MVPConstants));
-
-        // Update material constants
-        m_material->UpdateConstants();
-
-        // Update lighting constants
-        SceneLightingData lightingData = {};
-        lightingData.cameraPosition = m_camera->GetPosition();
-        lightingData.lightCount = static_cast<uint32_t>(m_lights.size());
-        for (uint32_t i = 0; i < m_lights.size(); ++i)
+        // Update cube entity transform
+        Transform* transform = m_scene->GetComponent<Transform>(m_cubeEntity);
+        if (transform)
         {
-            lightingData.lights[i] = m_lights[i].GetLightData();
+            transform->SetLocalRotationEuler(rotation * 0.5f, rotation, 0.0f);
         }
 
-        m_lightingConstantBuffer->UpdateData(&lightingData, sizeof(SceneLightingData));
+        // Update scene (propagates transform hierarchy)
+        m_sceneRenderer->Update(0.016f);  // ~60fps delta time
     }
 
     void Render()
@@ -409,33 +417,8 @@ public:
         const float clearColor[] = { 0.02f, 0.02f, 0.02f, 1.0f };
         m_commandList->ClearRenderTargetView(rtv, clearColor);
 
-        // Set pipeline state and root signature
-        m_commandList->SetPipelineState(m_pipelineState->GetD3D12PipelineState());
-        m_commandList->SetGraphicsRootSignature(m_rootSignature->GetD3D12RootSignature());
-        m_commandList->SetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-        // Set descriptor heap
-        ID3D12DescriptorHeap* heaps[] = { m_srvHeap->GetD3D12DescriptorHeap() };
-        m_commandList->SetDescriptorHeaps(1, heaps);
-
-        // Bind resources
-        // Root param 0: MVP constant buffer (b0)
-        m_commandList->SetGraphicsRootConstantBufferView(0, m_mvpConstantBuffer->GetGPUVirtualAddress());
-
-        // Root param 1: Material constant buffer (b1)
-        m_commandList->SetGraphicsRootConstantBufferView(1, m_material->GetConstantBuffer()->GetGPUVirtualAddress());
-
-        // Root param 2: Lighting constant buffer (b2)
-        m_commandList->SetGraphicsRootConstantBufferView(2, m_lightingConstantBuffer->GetGPUVirtualAddress());
-
-        // Root param 3: Albedo texture (t0)
-        m_commandList->SetGraphicsRootDescriptorTable(3, m_albedoTexture->GetSRV().gpu);
-
-        // Root param 4: Normal map (t1)
-        m_commandList->SetGraphicsRootDescriptorTable(4, m_normalTexture->GetSRV().gpu);
-
-        // Draw cube
-        m_mesh->Draw(m_commandList.get());
+        // Render scene using SceneRenderer
+        m_sceneRenderer->Render(m_commandList.get(), m_srvHeap.get());
 
         // Transition back buffer to present state
         m_commandList->TransitionBarrier(
@@ -466,8 +449,11 @@ public:
             m_commandQueue->Flush();
         }
 
-        m_lightingConstantBuffer.reset();
-        m_mvpConstantBuffer.reset();
+        // Scene resources
+        m_sceneRenderer.reset();
+        m_scene.reset();
+
+        // Rendering resources
         m_pipelineState.reset();
         m_rootSignature.reset();
         m_pixelShader.reset();
@@ -495,14 +481,17 @@ private:
     // Camera
     std::unique_ptr<Camera> m_camera;
 
+    // Scene management
+    std::unique_ptr<Scene> m_scene;
+    std::unique_ptr<SceneRenderer> m_sceneRenderer;
+    Entity m_cubeEntity;
+
     // Rendering resources
     std::unique_ptr<DescriptorHeap> m_srvHeap;
     std::unique_ptr<Mesh> m_mesh;
     std::unique_ptr<Texture> m_albedoTexture;
     std::unique_ptr<Texture> m_normalTexture;
     std::unique_ptr<Material> m_material;
-    std::unique_ptr<Buffer> m_mvpConstantBuffer;
-    std::unique_ptr<Buffer> m_lightingConstantBuffer;
     std::unique_ptr<Shader> m_vertexShader;
     std::unique_ptr<Shader> m_pixelShader;
     std::unique_ptr<RootSignature> m_rootSignature;

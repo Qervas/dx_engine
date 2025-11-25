@@ -55,6 +55,7 @@ public:
 
     // Accessors
     uint32_t GetIndexCount() const { return m_indexCount; }
+    bool IsValid() const { return m_vertexBuffer && m_indexBuffer && m_indexCount > 0; }
 
 private:
     GraphicsDevice* m_device;

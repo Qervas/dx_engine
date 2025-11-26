@@ -25,7 +25,11 @@
 #include "RenderGraph/ShadowPass.h"
 #include "RenderGraph/MainPass.h"
 #include "RenderGraph/DebugPass.h"
+#include "RenderGraph/SkyboxPass.h"
 #include "Renderer/DebugRenderer.h"
+#include "Renderer/Skybox.h"
+#include "Renderer/CubemapLoader.h"
+#include "RHI/CubemapTexture.h"
 #include "UI/ImGuiRenderer.h"
 #include <imgui.h>
 #include <memory>
@@ -124,6 +128,12 @@ public:
             return false;
         }
 
+        // Initialize skybox
+        if (!InitializeSkybox())
+        {
+            return false;
+        }
+
         // Initialize render graph
         if (!InitializeRenderGraph())
         {
@@ -145,7 +155,10 @@ public:
         m_mainPass = m_renderGraph->AddPass<MainPass>(m_sceneRenderer.get(), m_swapChain.get());
         m_mainPass->SetShadowResources(m_shadowMap.get(), m_shadowConstantBuffer.get());
 
-        // Create debug pass (renders after main pass)
+        // Create skybox pass (renders after main scene to use depth buffer for occlusion)
+        m_skyboxPass = m_renderGraph->AddPass<SkyboxPass>(m_skybox.get(), m_swapChain.get(), m_camera.get());
+
+        // Create debug pass (renders after skybox)
         m_debugPass = m_renderGraph->AddPass<DebugPass>(m_debugRenderer.get());
 
         // Compile the graph
@@ -470,6 +483,37 @@ public:
         m_lights[1].SetRange(20.0f);
     }
 
+    bool InitializeSkybox()
+    {
+        // Generate a procedural gradient sky cubemap
+        m_skyCubemap = std::unique_ptr<CubemapTexture>(
+            CubemapLoader::GenerateGradientSky(
+                m_device.get(),
+                m_commandList.get(),
+                m_commandQueue.get(),
+                m_srvHeap.get(),
+                512  // Cubemap face size
+            )
+        );
+
+        if (!m_skyCubemap)
+        {
+            return false;
+        }
+
+        // Create skybox
+        m_skybox = std::make_unique<Skybox>(m_device.get());
+        if (!m_skybox->Initialize(
+            m_skyCubemap.get(),
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            m_swapChain->GetDepthFormat()))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
     void OnResize(uint32_t width, uint32_t height)
     {
         if (width == 0 || height == 0)
@@ -610,6 +654,9 @@ public:
         // Configure main pass
         m_mainPass->SetBackBufferIndex(backBufferIndex);
 
+        // Configure skybox pass
+        m_skyboxPass->SetBackBufferIndex(backBufferIndex);
+
         // Transition back buffer to render target state
         m_commandList->TransitionBarrier(
             backBuffer,
@@ -659,7 +706,12 @@ public:
         m_renderGraph.reset();
         m_shadowPass = nullptr;
         m_mainPass = nullptr;
+        m_skyboxPass = nullptr;
         m_debugPass = nullptr;
+
+        // Skybox
+        m_skybox.reset();
+        m_skyCubemap.reset();
 
         // Debug renderer
         m_debugRenderer.reset();
@@ -732,7 +784,12 @@ private:
     std::unique_ptr<RenderGraph> m_renderGraph;
     ShadowPass* m_shadowPass = nullptr;  // Owned by render graph
     MainPass* m_mainPass = nullptr;      // Owned by render graph
+    SkyboxPass* m_skyboxPass = nullptr;  // Owned by render graph
     DebugPass* m_debugPass = nullptr;    // Owned by render graph
+
+    // Skybox
+    std::unique_ptr<CubemapTexture> m_skyCubemap;
+    std::unique_ptr<Skybox> m_skybox;
 
     // Debug renderer
     std::unique_ptr<DebugRenderer> m_debugRenderer;

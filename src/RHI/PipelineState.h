@@ -23,6 +23,15 @@ public:
         DXGI_FORMAT dsvFormat = DXGI_FORMAT_UNKNOWN
     );
 
+    // Create skybox pipeline state (no input layout, depth test <=, no depth write)
+    bool CreateForSkybox(
+        RootSignature* rootSignature,
+        Shader* vertexShader,
+        Shader* pixelShader,
+        DXGI_FORMAT rtvFormat,
+        DXGI_FORMAT dsvFormat
+    );
+
     // Accessors
     ID3D12PipelineState* GetD3D12PipelineState() const { return m_pipelineState.Get(); }
     ID3D12PipelineState** GetAddressOf() { return m_pipelineState.GetAddressOf(); }

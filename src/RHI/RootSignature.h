@@ -26,6 +26,9 @@ public:
     // Create root signature for PBR with shadows (MVP + Material + Lighting + Shadow CBVs + albedo + normal + shadow textures)
     bool CreateForPBRWithShadows();
 
+    // Create root signature for skybox rendering (CBV + cubemap texture)
+    bool CreateForSkybox();
+
     // Accessors
     ID3D12RootSignature* GetD3D12RootSignature() const { return m_rootSignature.Get(); }
     ID3D12RootSignature** GetAddressOf() { return m_rootSignature.GetAddressOf(); }

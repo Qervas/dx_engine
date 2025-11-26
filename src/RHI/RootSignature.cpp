@@ -502,3 +502,89 @@ bool RootSignature::CreateForPBRWithShadows()
 
     return true;
 }
+
+bool RootSignature::CreateForSkybox()
+{
+    // Root signature for skybox rendering
+    // b0: Skybox constants (camera inverse VP matrix, position, exposure) - visible to both VS and PS
+    // t0: Cubemap texture (pixel shader)
+    // s0: Linear sampler
+
+    D3D12_ROOT_PARAMETER rootParams[2] = {};
+
+    // Root parameter 0: CBV for skybox constants (b0) - visible to all stages
+    rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rootParams[0].Descriptor.ShaderRegister = 0;
+    rootParams[0].Descriptor.RegisterSpace = 0;
+    rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    // Root parameter 1: Descriptor table for cubemap texture (t0)
+    D3D12_DESCRIPTOR_RANGE cubemapRange = {};
+    cubemapRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    cubemapRange.NumDescriptors = 1;
+    cubemapRange.BaseShaderRegister = 0;  // t0
+    cubemapRange.RegisterSpace = 0;
+    cubemapRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rootParams[1].DescriptorTable.NumDescriptorRanges = 1;
+    rootParams[1].DescriptorTable.pDescriptorRanges = &cubemapRange;
+    rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    // Static sampler (s0) - linear sampler with clamp addressing
+    D3D12_STATIC_SAMPLER_DESC sampler = {};
+    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.MipLODBias = 0.0f;
+    sampler.MaxAnisotropy = 1;
+    sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+    sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+    sampler.MinLOD = 0.0f;
+    sampler.MaxLOD = D3D12_FLOAT32_MAX;
+    sampler.ShaderRegister = 0;
+    sampler.RegisterSpace = 0;
+    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    // Root signature description - note: no input assembler needed for fullscreen triangle
+    D3D12_ROOT_SIGNATURE_DESC rootSigDesc = {};
+    rootSigDesc.NumParameters = 2;
+    rootSigDesc.pParameters = rootParams;
+    rootSigDesc.NumStaticSamplers = 1;
+    rootSigDesc.pStaticSamplers = &sampler;
+    rootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;  // No input layout needed
+
+    ComPtr<ID3DBlob> signature;
+    ComPtr<ID3DBlob> error;
+
+    HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error);
+    if (FAILED(hr))
+    {
+        if (error)
+        {
+            OutputDebugStringA((char*)error->GetBufferPointer());
+        }
+        MessageBox(nullptr, L"Failed to serialize skybox root signature", L"Error", MB_OK);
+        return false;
+    }
+
+    hr = m_device->GetD3D12Device()->CreateRootSignature(
+        0,
+        signature->GetBufferPointer(),
+        signature->GetBufferSize(),
+        IID_PPV_ARGS(&m_rootSignature)
+    );
+
+    if (FAILED(hr))
+    {
+        MessageBox(nullptr, L"Failed to create skybox root signature", L"Error", MB_OK);
+        return false;
+    }
+
+#if defined(_DEBUG)
+    m_rootSignature->SetName(L"Skybox Root Signature");
+#endif
+
+    return true;
+}

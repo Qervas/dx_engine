@@ -21,6 +21,11 @@
 #include "Platform/Window.h"
 #include "Platform/Input.h"
 #include "Core/Timer.h"
+#include "RenderGraph/RenderGraph.h"
+#include "RenderGraph/ShadowPass.h"
+#include "RenderGraph/MainPass.h"
+#include "RenderGraph/DebugPass.h"
+#include "Renderer/DebugRenderer.h"
 #include <memory>
 #include <DirectXMath.h>
 
@@ -98,6 +103,41 @@ public:
         {
             return false;
         }
+
+        // Initialize debug renderer
+        m_debugRenderer = std::make_unique<DebugRenderer>(m_device.get());
+        if (!m_debugRenderer->Initialize())
+        {
+            return false;
+        }
+        m_debugRenderer->SetCamera(m_camera.get());
+
+        // Initialize render graph
+        if (!InitializeRenderGraph())
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    bool InitializeRenderGraph()
+    {
+        // Create render graph
+        m_renderGraph = std::make_unique<RenderGraph>(m_device.get());
+
+        // Create shadow pass
+        m_shadowPass = m_renderGraph->AddPass<ShadowPass>(m_shadowMap.get(), m_sceneRenderer.get());
+
+        // Create main pass
+        m_mainPass = m_renderGraph->AddPass<MainPass>(m_sceneRenderer.get(), m_swapChain.get());
+        m_mainPass->SetShadowResources(m_shadowMap.get(), m_shadowConstantBuffer.get());
+
+        // Create debug pass (renders after main pass)
+        m_debugPass = m_renderGraph->AddPass<DebugPass>(m_debugRenderer.get());
+
+        // Compile the graph
+        m_renderGraph->Compile();
 
         return true;
     }
@@ -447,6 +487,45 @@ public:
         // Update scene (propagates transform hierarchy)
         m_sceneRenderer->Update(deltaTime);
 
+        // === Debug Rendering ===
+        // Clear previous frame's debug primitives
+        m_debugRenderer->Clear();
+
+        // Draw world axes at origin
+        m_debugRenderer->DrawAxes(XMFLOAT3(0.0f, 0.0f, 0.0f), 2.0f);
+
+        // Draw a grid on the ground plane
+        m_debugRenderer->DrawGrid(20.0f, 1.0f, XMFLOAT4(0.3f, 0.3f, 0.3f, 1.0f));
+
+        // Draw bounding boxes around cubes (skip ground at y=-2)
+        const auto& entities = m_scene->GetEntitiesWithComponent<Transform>();
+        for (Entity entity : entities)
+        {
+            Transform* transform = m_scene->GetComponent<Transform>(entity);
+            if (transform)
+            {
+                XMFLOAT3 pos = transform->GetWorldPosition();
+                // Skip ground (positioned at y=-2)
+                if (pos.y < -1.0f)
+                    continue;
+
+                m_debugRenderer->DrawWireBox(
+                    XMFLOAT3(pos.x - 0.5f, pos.y - 0.5f, pos.z - 0.5f),
+                    XMFLOAT3(pos.x + 0.5f, pos.y + 0.5f, pos.z + 0.5f),
+                    XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f)
+                );
+            }
+        }
+
+        // Draw light direction indicator
+        XMFLOAT3 lightDir = m_lights[0].GetDirection();
+        m_debugRenderer->DrawArrow(
+            XMFLOAT3(0.0f, 5.0f, 0.0f),
+            XMFLOAT3(-lightDir.x * 3.0f, 5.0f - lightDir.y * 3.0f, -lightDir.z * 3.0f),
+            XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f),
+            0.2f
+        );
+
         // Update window title with FPS
         static float fpsUpdateTimer = 0.0f;
         fpsUpdateTimer += deltaTime;
@@ -463,38 +542,23 @@ public:
     {
         uint32_t backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
         ID3D12Resource* backBuffer = m_swapChain->GetBackBuffer(backBufferIndex);
-        D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_swapChain->GetRTV(backBufferIndex);
 
         // Reset command list
         m_commandList->Reset();
 
-        // =====================================================
-        // SHADOW PASS - Render scene from light's perspective
-        // =====================================================
+        // Begin frame for render graph
+        m_renderGraph->BeginFrame();
 
-        // Update shadow map light matrix based on scene bounds and light direction
+        // Update pass parameters for this frame
         XMFLOAT3 sceneCenter;
         float sceneRadius;
         m_sceneRenderer->GetSceneBounds(sceneCenter, sceneRadius);
-        m_shadowMap->UpdateLightMatrix(m_lights[0], sceneCenter, sceneRadius);
 
-        // Update shadow constant buffer for main pass
-        ShadowConstants shadowConst;
-        XMStoreFloat4x4(&shadowConst.lightViewProj, XMMatrixTranspose(m_shadowMap->GetLightViewProjection()));
-        m_shadowConstantBuffer->UpdateData(&shadowConst, sizeof(ShadowConstants));
+        // Configure shadow pass
+        m_shadowPass->SetLightInfo(&m_lights[0], sceneCenter, sceneRadius);
 
-        // Begin shadow pass (sets render target, viewport, clears depth, binds pipeline)
-        m_shadowMap->BeginShadowPass(m_commandList.get());
-
-        // Render all shadow casters
-        m_sceneRenderer->RenderShadowPass(m_commandList.get());
-
-        // End shadow pass (transitions texture for sampling)
-        m_shadowMap->EndShadowPass(m_commandList.get());
-
-        // =====================================================
-        // MAIN PASS - Render scene to back buffer
-        // =====================================================
+        // Configure main pass
+        m_mainPass->SetBackBufferIndex(backBufferIndex);
 
         // Transition back buffer to render target state
         m_commandList->TransitionBarrier(
@@ -503,27 +567,11 @@ public:
             D3D12_RESOURCE_STATE_RENDER_TARGET
         );
 
-        // Get depth stencil view
-        D3D12_CPU_DESCRIPTOR_HANDLE dsv = m_swapChain->GetDSV();
+        // Execute render graph (shadow pass + main pass)
+        m_renderGraph->Execute(m_commandList.get(), m_srvHeap.get());
 
-        // Set render target with depth buffer
-        m_commandList->SetRenderTargets(1, &rtv, &dsv);
-
-        // Set viewport and scissor
-        m_commandList->SetViewport(0, 0,
-            static_cast<float>(m_swapChain->GetWidth()),
-            static_cast<float>(m_swapChain->GetHeight()));
-        m_commandList->SetScissorRect(0, 0,
-            m_swapChain->GetWidth(),
-            m_swapChain->GetHeight());
-
-        // Clear render target and depth buffer
-        const float clearColor[] = { 0.02f, 0.02f, 0.02f, 1.0f };
-        m_commandList->ClearRenderTargetView(rtv, clearColor);
-        m_commandList->ClearDepthStencilView(dsv, 1.0f);
-
-        // Render scene using SceneRenderer (with shadow map bound)
-        m_sceneRenderer->Render(m_commandList.get(), m_srvHeap.get());
+        // End frame for render graph
+        m_renderGraph->EndFrame();
 
         // Transition back buffer to present state
         m_commandList->TransitionBarrier(
@@ -553,6 +601,15 @@ public:
         {
             m_commandQueue->Flush();
         }
+
+        // Render graph (owns passes, must be destroyed first)
+        m_renderGraph.reset();
+        m_shadowPass = nullptr;
+        m_mainPass = nullptr;
+        m_debugPass = nullptr;
+
+        // Debug renderer
+        m_debugRenderer.reset();
 
         // Scene resources
         m_sceneRenderer.reset();
@@ -614,6 +671,15 @@ private:
     // Shadow mapping
     std::unique_ptr<ShadowMap> m_shadowMap;
     std::unique_ptr<Buffer> m_shadowConstantBuffer;
+
+    // Render graph
+    std::unique_ptr<RenderGraph> m_renderGraph;
+    ShadowPass* m_shadowPass = nullptr;  // Owned by render graph
+    MainPass* m_mainPass = nullptr;      // Owned by render graph
+    DebugPass* m_debugPass = nullptr;    // Owned by render graph
+
+    // Debug renderer
+    std::unique_ptr<DebugRenderer> m_debugRenderer;
 
     // Scene lights
     std::vector<Light> m_lights;

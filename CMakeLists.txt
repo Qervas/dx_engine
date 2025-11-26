@@ -54,6 +54,8 @@ add_executable(dx_engine
     src/Renderer/SceneRenderer.cpp
     src/Renderer/ShadowMap.h
     src/Renderer/ShadowMap.cpp
+    src/Renderer/DebugRenderer.h
+    src/Renderer/DebugRenderer.cpp
 
     # Scene
     src/Scene/Entity.h
@@ -63,6 +65,18 @@ add_executable(dx_engine
     src/Scene/Scene.cpp
     src/Scene/Transform.h
     src/Scene/Transform.cpp
+
+    # Render Graph
+    src/RenderGraph/RenderPass.h
+    src/RenderGraph/RenderPass.cpp
+    src/RenderGraph/RenderGraph.h
+    src/RenderGraph/RenderGraph.cpp
+    src/RenderGraph/ShadowPass.h
+    src/RenderGraph/ShadowPass.cpp
+    src/RenderGraph/MainPass.h
+    src/RenderGraph/MainPass.cpp
+    src/RenderGraph/DebugPass.h
+    src/RenderGraph/DebugPass.cpp
 
     # Platform
     src/Platform/Window.h

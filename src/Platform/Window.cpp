@@ -1,4 +1,5 @@
 #include "Window.h"
+#include "Input.h"
 
 Window::Window(const std::wstring& title, uint32_t width, uint32_t height)
     : m_title(title)
@@ -54,6 +55,9 @@ bool Window::Initialize()
     ShowWindow(m_hwnd, SW_SHOW);
     UpdateWindow(m_hwnd);
 
+    // Initialize input system with window handle
+    Input::Get().SetWindowHandle(m_hwnd);
+
     return true;
 }
 
@@ -101,6 +105,9 @@ LRESULT CALLBACK Window::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM 
         window = reinterpret_cast<Window*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
     }
 
+    // Forward messages to input system
+    Input::Get().ProcessMessage(uMsg, wParam, lParam);
+
     if (window)
     {
         switch (uMsg)
@@ -113,8 +120,26 @@ LRESULT CALLBACK Window::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM 
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE)
             {
-                window->m_shouldClose = true;
-                PostQuitMessage(0);
+                // Toggle mouse capture with Escape
+                Input& input = Input::Get();
+                if (input.IsMouseCaptured())
+                {
+                    input.SetMouseCaptured(false);
+                }
+                else
+                {
+                    // If not captured, close the window
+                    window->m_shouldClose = true;
+                    PostQuitMessage(0);
+                }
+            }
+            return 0;
+
+        case WM_LBUTTONDOWN:
+            // Capture mouse on left click (for FPS controls)
+            if (!Input::Get().IsMouseCaptured())
+            {
+                Input::Get().SetMouseCaptured(true);
             }
             return 0;
         }

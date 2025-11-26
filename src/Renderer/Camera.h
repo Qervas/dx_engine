@@ -27,6 +27,9 @@ public:
     void MoveUp(float distance);
     void Rotate(float deltaPitch, float deltaYaw);
 
+    // FPS-style input processing
+    void ProcessFPSInput(float deltaTime, float moveSpeed = 5.0f, float lookSensitivity = 0.002f);
+
     // Accessors
     XMFLOAT3 GetPosition() const { return m_position; }
     XMFLOAT3 GetForward() const;

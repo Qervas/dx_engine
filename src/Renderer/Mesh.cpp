@@ -212,6 +212,37 @@ Mesh* Mesh::CreateCubeWithTangents(GraphicsDevice* device)
     return mesh;
 }
 
+Mesh* Mesh::CreatePlaneWithTangents(GraphicsDevice* device, float size, float uvScale)
+{
+    float halfSize = size * 0.5f;
+
+    // Plane vertices (facing up, Y+ normal)
+    VertexPosUVNormalTangent vertices[] =
+    {
+        // Position                              TexCoord                    Normal                  Tangent
+        { XMFLOAT3(-halfSize, 0.0f, -halfSize), XMFLOAT2(0.0f, uvScale),     XMFLOAT3(0.0f, 1.0f, 0.0f), XMFLOAT3(1.0f, 0.0f, 0.0f) },
+        { XMFLOAT3(-halfSize, 0.0f,  halfSize), XMFLOAT2(0.0f, 0.0f),        XMFLOAT3(0.0f, 1.0f, 0.0f), XMFLOAT3(1.0f, 0.0f, 0.0f) },
+        { XMFLOAT3( halfSize, 0.0f,  halfSize), XMFLOAT2(uvScale, 0.0f),     XMFLOAT3(0.0f, 1.0f, 0.0f), XMFLOAT3(1.0f, 0.0f, 0.0f) },
+        { XMFLOAT3( halfSize, 0.0f, -halfSize), XMFLOAT2(uvScale, uvScale),  XMFLOAT3(0.0f, 1.0f, 0.0f), XMFLOAT3(1.0f, 0.0f, 0.0f) },
+    };
+
+    // Plane indices (two triangles)
+    uint32_t indices[] =
+    {
+        0, 1, 2,
+        0, 2, 3
+    };
+
+    Mesh* mesh = new Mesh(device);
+    if (!mesh->CreateWithTangents(vertices, _countof(vertices), indices, _countof(indices)))
+    {
+        delete mesh;
+        return nullptr;
+    }
+
+    return mesh;
+}
+
 void Mesh::Draw(CommandList* commandList)
 {
     D3D12_VERTEX_BUFFER_VIEW vbv = m_vertexBuffer->GetVertexBufferView();

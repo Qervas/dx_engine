@@ -14,10 +14,13 @@
 #include "Renderer/Light.h"
 #include "Renderer/ProceduralTexture.h"
 #include "Renderer/SceneRenderer.h"
+#include "Renderer/ShadowMap.h"
 #include "Scene/Scene.h"
 #include "Scene/Transform.h"
 #include "Scene/MeshRenderer.h"
 #include "Platform/Window.h"
+#include "Platform/Input.h"
+#include "Core/Timer.h"
 #include <memory>
 #include <DirectXMath.h>
 
@@ -82,9 +85,9 @@ public:
             return false;
         }
 
-        // Initialize camera
+        // Initialize camera - positioned to see ground and shadows
         m_camera = std::make_unique<Camera>();
-        m_camera->SetPosition(XMFLOAT3(0.0f, 0.0f, -3.0f));
+        m_camera->SetPosition(XMFLOAT3(0.0f, 5.0f, -10.0f));
         m_camera->SetPerspective(60.0f, (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT, 0.1f, 100.0f);
 
         // Initialize scene lights
@@ -115,21 +118,49 @@ public:
         m_sceneRenderer->SetCamera(m_camera.get());
         m_sceneRenderer->SetLights(m_lights);
         m_sceneRenderer->SetPipeline(m_rootSignature.get(), m_pipelineState.get());
+        m_sceneRenderer->SetShadowMap(m_shadowMap.get());
+        m_sceneRenderer->SetShadowConstantBuffer(m_shadowConstantBuffer.get());
 
-        // Create a cube entity
-        Entity cubeEntity = m_scene->CreateEntity("PBR Cube");
+        // Create ground plane
+        Entity groundEntity = m_scene->CreateEntity("Ground");
+        Transform* groundTransform = m_scene->AddComponent<Transform>(groundEntity);
+        groundTransform->SetLocalPosition(0.0f, -2.0f, 0.0f);  // Below the cubes
 
-        // Add Transform component
-        Transform* transform = m_scene->AddComponent<Transform>(cubeEntity);
-        transform->SetLocalPosition(0.0f, 0.0f, 0.0f);
+        MeshRenderer* groundRenderer = m_scene->AddComponent<MeshRenderer>(groundEntity);
+        groundRenderer->mesh = m_groundMesh.get();
+        groundRenderer->material = m_groundMaterial.get();
 
-        // Add MeshRenderer component
-        MeshRenderer* meshRenderer = m_scene->AddComponent<MeshRenderer>(cubeEntity);
-        meshRenderer->mesh = m_mesh.get();
-        meshRenderer->material = m_material.get();
+        // Create a grid of cubes above the ground
+        const int gridSize = 3;  // Reduced for clearer shadows
+        const float spacing = 3.0f;
+        const float offset = (gridSize - 1) * spacing * 0.5f;
 
-        // Store the cube entity for animation
-        m_cubeEntity = cubeEntity;
+        for (int x = 0; x < gridSize; ++x)
+        {
+            for (int z = 0; z < gridSize; ++z)
+            {
+                Entity cubeEntity = m_scene->CreateEntity("Cube");
+
+                // Add Transform component - cubes floating above ground
+                Transform* transform = m_scene->AddComponent<Transform>(cubeEntity);
+                transform->SetLocalPosition(
+                    x * spacing - offset,
+                    1.0f + (x + z) * 0.3f,  // Varying heights for interesting shadows
+                    z * spacing - offset
+                );
+
+                // Add MeshRenderer component
+                MeshRenderer* meshRenderer = m_scene->AddComponent<MeshRenderer>(cubeEntity);
+                meshRenderer->mesh = m_mesh.get();
+                meshRenderer->material = m_material.get();
+
+                // Store center cube for reference
+                if (x == gridSize / 2 && z == gridSize / 2)
+                {
+                    m_cubeEntity = cubeEntity;
+                }
+            }
+        }
 
         return true;
     }
@@ -146,6 +177,13 @@ public:
         // Create cube mesh with tangents for normal mapping
         m_mesh = std::unique_ptr<Mesh>(Mesh::CreateCubeWithTangents(m_device.get()));
         if (!m_mesh)
+        {
+            return false;
+        }
+
+        // Create ground plane mesh (large, tiled UVs)
+        m_groundMesh = std::unique_ptr<Mesh>(Mesh::CreatePlaneWithTangents(m_device.get(), 30.0f, 10.0f));
+        if (!m_groundMesh)
         {
             return false;
         }
@@ -281,7 +319,7 @@ public:
 
         m_normalTexture->SetSRV(normalSrvHandle);
 
-        // Create material
+        // Create material for cubes
         m_material = std::make_unique<Material>(m_device.get());
         m_material->SetAlbedo(XMFLOAT3(1.0f, 1.0f, 1.0f));
         m_material->SetMetallic(0.3f);
@@ -290,22 +328,45 @@ public:
         m_material->SetAlbedoTexture(m_albedoTexture.get(), albedoSrvHandle);
         m_material->SetNormalTexture(m_normalTexture.get(), normalSrvHandle);
 
-        // Compile PBR shaders with normal mapping
+        // Create ground material (gray floor)
+        m_groundMaterial = std::make_unique<Material>(m_device.get());
+        m_groundMaterial->SetAlbedo(XMFLOAT3(0.5f, 0.5f, 0.5f));
+        m_groundMaterial->SetMetallic(0.0f);
+        m_groundMaterial->SetRoughness(0.9f);
+        m_groundMaterial->SetAO(1.0f);
+        m_groundMaterial->SetAlbedoTexture(m_albedoTexture.get(), albedoSrvHandle);
+        m_groundMaterial->SetNormalTexture(m_normalTexture.get(), normalSrvHandle);
+
+        // Create shadow map
+        m_shadowMap = std::make_unique<ShadowMap>(m_device.get());
+        if (!m_shadowMap->Initialize(2048, 2048, m_srvHeap.get()))
+        {
+            return false;
+        }
+
+        // Create shadow constant buffer for main pass
+        m_shadowConstantBuffer = std::make_unique<Buffer>(m_device.get());
+        if (!m_shadowConstantBuffer->Create(sizeof(ShadowConstants), 0, BufferUsage::Constant))
+        {
+            return false;
+        }
+
+        // Compile PBR shaders with shadows
         m_vertexShader = std::make_unique<Shader>();
-        if (!m_vertexShader->CompileFromFile(L"shaders/PBRNormalVS.hlsl", "main", "vs_5_1"))
+        if (!m_vertexShader->CompileFromFile(L"shaders/PBRShadowVS.hlsl", "main", "vs_5_1"))
         {
             return false;
         }
 
         m_pixelShader = std::make_unique<Shader>();
-        if (!m_pixelShader->CompileFromFile(L"shaders/PBRNormalPS.hlsl", "main", "ps_5_1"))
+        if (!m_pixelShader->CompileFromFile(L"shaders/PBRShadowPS.hlsl", "main", "ps_5_1"))
         {
             return false;
         }
 
-        // Create PBR root signature with normal mapping
+        // Create PBR root signature with shadows
         m_rootSignature = std::make_unique<RootSignature>(m_device.get());
-        if (!m_rootSignature->CreateForPBRWithNormalMap())
+        if (!m_rootSignature->CreateForPBRWithShadows())
         {
             return false;
         }
@@ -323,14 +384,15 @@ public:
         inputLayout.pInputElementDescs = inputElements;
         inputLayout.NumElements = _countof(inputElements);
 
-        // Create pipeline state
+        // Create pipeline state with depth testing enabled
         m_pipelineState = std::make_unique<PipelineState>(m_device.get());
         if (!m_pipelineState->CreateGraphics(
             m_rootSignature.get(),
             m_vertexShader.get(),
             m_pixelShader.get(),
             inputLayout,
-            DXGI_FORMAT_R8G8B8A8_UNORM))
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            m_swapChain->GetDepthFormat()))  // Enable depth testing
         {
             return false;
         }
@@ -340,28 +402,31 @@ public:
 
     void InitializeLights()
     {
-        // Create 2 point lights
         m_lights.resize(2);
 
-        // Light 1: White light on the right (reduced intensity)
-        m_lights[0].SetType(LightType::Point);
-        m_lights[0].SetPosition(XMFLOAT3(2.0f, 1.0f, -2.0f));
-        m_lights[0].SetColor(XMFLOAT3(1.0f, 1.0f, 1.0f));
-        m_lights[0].SetIntensity(2.0f);  // Reduced from 10.0
-        m_lights[0].SetRange(10.0f);
+        // Light 1: Directional sun light (casts shadows)
+        m_lights[0].SetType(LightType::Directional);
+        m_lights[0].SetDirection(XMFLOAT3(0.5f, -1.0f, 0.5f));  // Sun angle
+        m_lights[0].SetColor(XMFLOAT3(1.0f, 0.95f, 0.8f));      // Warm sunlight
+        m_lights[0].SetIntensity(1.5f);
 
-        // Light 2: Blue light on the left (reduced intensity)
+        // Light 2: Fill light (point light, no shadows)
         m_lights[1].SetType(LightType::Point);
-        m_lights[1].SetPosition(XMFLOAT3(-2.0f, 1.0f, -2.0f));
-        m_lights[1].SetColor(XMFLOAT3(0.3f, 0.5f, 1.0f));
-        m_lights[1].SetIntensity(1.5f);  // Reduced from 8.0
-        m_lights[1].SetRange(10.0f);
+        m_lights[1].SetPosition(XMFLOAT3(-3.0f, 2.0f, -3.0f));
+        m_lights[1].SetColor(XMFLOAT3(0.4f, 0.5f, 0.7f));  // Cool fill
+        m_lights[1].SetIntensity(0.8f);
+        m_lights[1].SetRange(20.0f);
     }
 
     void Run()
     {
+        m_timer.Reset();
+
         while (m_window.ProcessMessages())
         {
+            m_timer.Tick();
+            Input::Get().Update();
+
             Update();
             Render();
         }
@@ -372,18 +437,26 @@ public:
 
     void Update()
     {
-        static float rotation = 0.0f;
-        rotation += 0.01f;
+        float deltaTime = m_timer.GetDeltaTime();
 
-        // Update cube entity transform
-        Transform* transform = m_scene->GetComponent<Transform>(m_cubeEntity);
-        if (transform)
-        {
-            transform->SetLocalRotationEuler(rotation * 0.5f, rotation, 0.0f);
-        }
+        // Process camera FPS controls
+        m_camera->ProcessFPSInput(deltaTime, 5.0f, 0.003f);
+
+        // Scene is static - no rotation
 
         // Update scene (propagates transform hierarchy)
-        m_sceneRenderer->Update(0.016f);  // ~60fps delta time
+        m_sceneRenderer->Update(deltaTime);
+
+        // Update window title with FPS
+        static float fpsUpdateTimer = 0.0f;
+        fpsUpdateTimer += deltaTime;
+        if (fpsUpdateTimer >= 0.5f)
+        {
+            fpsUpdateTimer = 0.0f;
+            wchar_t title[128];
+            swprintf_s(title, L"DX12 Engine - FPS: %.1f | Click to capture mouse, ESC to release", m_timer.GetFPS());
+            SetWindowText(m_window.GetHandle(), title);
+        }
     }
 
     void Render()
@@ -395,6 +468,34 @@ public:
         // Reset command list
         m_commandList->Reset();
 
+        // =====================================================
+        // SHADOW PASS - Render scene from light's perspective
+        // =====================================================
+
+        // Update shadow map light matrix based on scene bounds and light direction
+        XMFLOAT3 sceneCenter;
+        float sceneRadius;
+        m_sceneRenderer->GetSceneBounds(sceneCenter, sceneRadius);
+        m_shadowMap->UpdateLightMatrix(m_lights[0], sceneCenter, sceneRadius);
+
+        // Update shadow constant buffer for main pass
+        ShadowConstants shadowConst;
+        XMStoreFloat4x4(&shadowConst.lightViewProj, XMMatrixTranspose(m_shadowMap->GetLightViewProjection()));
+        m_shadowConstantBuffer->UpdateData(&shadowConst, sizeof(ShadowConstants));
+
+        // Begin shadow pass (sets render target, viewport, clears depth, binds pipeline)
+        m_shadowMap->BeginShadowPass(m_commandList.get());
+
+        // Render all shadow casters
+        m_sceneRenderer->RenderShadowPass(m_commandList.get());
+
+        // End shadow pass (transitions texture for sampling)
+        m_shadowMap->EndShadowPass(m_commandList.get());
+
+        // =====================================================
+        // MAIN PASS - Render scene to back buffer
+        // =====================================================
+
         // Transition back buffer to render target state
         m_commandList->TransitionBarrier(
             backBuffer,
@@ -402,8 +503,11 @@ public:
             D3D12_RESOURCE_STATE_RENDER_TARGET
         );
 
-        // Set render target
-        m_commandList->SetRenderTargets(1, &rtv, nullptr);
+        // Get depth stencil view
+        D3D12_CPU_DESCRIPTOR_HANDLE dsv = m_swapChain->GetDSV();
+
+        // Set render target with depth buffer
+        m_commandList->SetRenderTargets(1, &rtv, &dsv);
 
         // Set viewport and scissor
         m_commandList->SetViewport(0, 0,
@@ -413,11 +517,12 @@ public:
             m_swapChain->GetWidth(),
             m_swapChain->GetHeight());
 
-        // Clear render target
+        // Clear render target and depth buffer
         const float clearColor[] = { 0.02f, 0.02f, 0.02f, 1.0f };
         m_commandList->ClearRenderTargetView(rtv, clearColor);
+        m_commandList->ClearDepthStencilView(dsv, 1.0f);
 
-        // Render scene using SceneRenderer
+        // Render scene using SceneRenderer (with shadow map bound)
         m_sceneRenderer->Render(m_commandList.get(), m_srvHeap.get());
 
         // Transition back buffer to present state
@@ -453,14 +558,20 @@ public:
         m_sceneRenderer.reset();
         m_scene.reset();
 
+        // Shadow mapping resources
+        m_shadowConstantBuffer.reset();
+        m_shadowMap.reset();
+
         // Rendering resources
         m_pipelineState.reset();
         m_rootSignature.reset();
         m_pixelShader.reset();
         m_vertexShader.reset();
+        m_groundMaterial.reset();
         m_material.reset();
         m_normalTexture.reset();
         m_albedoTexture.reset();
+        m_groundMesh.reset();
         m_mesh.reset();
         m_srvHeap.reset();
         m_camera.reset();
@@ -473,6 +584,7 @@ public:
 
 private:
     Window m_window;
+    Timer m_timer;
     std::unique_ptr<GraphicsDevice> m_device;
     std::unique_ptr<CommandQueue> m_commandQueue;
     std::unique_ptr<SwapChain> m_swapChain;
@@ -489,13 +601,19 @@ private:
     // Rendering resources
     std::unique_ptr<DescriptorHeap> m_srvHeap;
     std::unique_ptr<Mesh> m_mesh;
+    std::unique_ptr<Mesh> m_groundMesh;
     std::unique_ptr<Texture> m_albedoTexture;
     std::unique_ptr<Texture> m_normalTexture;
     std::unique_ptr<Material> m_material;
+    std::unique_ptr<Material> m_groundMaterial;
     std::unique_ptr<Shader> m_vertexShader;
     std::unique_ptr<Shader> m_pixelShader;
     std::unique_ptr<RootSignature> m_rootSignature;
     std::unique_ptr<PipelineState> m_pipelineState;
+
+    // Shadow mapping
+    std::unique_ptr<ShadowMap> m_shadowMap;
+    std::unique_ptr<Buffer> m_shadowConstantBuffer;
 
     // Scene lights
     std::vector<Light> m_lights;

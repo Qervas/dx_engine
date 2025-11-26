@@ -1,4 +1,5 @@
 #include "Camera.h"
+#include "../Platform/Input.h"
 
 Camera::Camera()
     : m_position(0.0f, 0.0f, 0.0f)
@@ -124,13 +125,13 @@ XMFLOAT3 Camera::GetRight() const
 
 XMFLOAT3 Camera::GetUp() const
 {
-    // Up vector
+    // Up vector: cross(forward, right) in left-handed system
     XMFLOAT3 forward = GetForward();
     XMFLOAT3 right = GetRight();
 
     XMVECTOR f = XMLoadFloat3(&forward);
     XMVECTOR r = XMLoadFloat3(&right);
-    XMVECTOR u = XMVector3Cross(r, f);
+    XMVECTOR u = XMVector3Cross(f, r);  // Fixed: was (r, f) which gave down
 
     XMFLOAT3 up;
     XMStoreFloat3(&up, u);
@@ -150,4 +151,52 @@ void Camera::UpdateViewMatrix()
 
     m_viewMatrix = XMMatrixLookAtLH(posVec, targetVec, upVec);
     m_viewDirty = false;
+}
+
+void Camera::ProcessFPSInput(float deltaTime, float moveSpeed, float lookSensitivity)
+{
+    Input& input = Input::Get();
+
+    // Movement (WASD + QE for up/down)
+    float speed = moveSpeed * deltaTime;
+
+    // Sprint with Shift
+    if (input.IsKeyDown(Key::Shift))
+    {
+        speed *= 2.0f;
+    }
+
+    if (input.IsKeyDown(Key::W))
+    {
+        MoveForward(speed);
+    }
+    if (input.IsKeyDown(Key::S))
+    {
+        MoveForward(-speed);
+    }
+    if (input.IsKeyDown(Key::A))
+    {
+        MoveRight(-speed);  // Left
+    }
+    if (input.IsKeyDown(Key::D))
+    {
+        MoveRight(speed);   // Right
+    }
+    if (input.IsKeyDown(Key::E) || input.IsKeyDown(Key::Space))
+    {
+        MoveUp(speed);      // Up
+    }
+    if (input.IsKeyDown(Key::Q) || input.IsKeyDown(Key::Control))
+    {
+        MoveUp(-speed);     // Down
+    }
+
+    // Mouse look (only when captured)
+    if (input.IsMouseCaptured())
+    {
+        float deltaX = static_cast<float>(input.GetMouseDeltaX());
+        float deltaY = static_cast<float>(input.GetMouseDeltaY());
+
+        Rotate(-deltaY * lookSensitivity, deltaX * lookSensitivity);  // Standard FPS controls
+    }
 }

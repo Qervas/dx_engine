@@ -19,6 +19,7 @@ public:
 
     // Accessors
     ID3D12Resource* GetD3D12Resource() const { return m_resource.Get(); }
+    ID3D12Resource** GetAddressOfResource() { return m_resource.GetAddressOf(); }
     D3D12_GPU_VIRTUAL_ADDRESS GetGPUVirtualAddress() const;
 
     // Debug naming

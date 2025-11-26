@@ -49,6 +49,7 @@ public:
     // Generate common shapes
     static Mesh* CreateCube(GraphicsDevice* device);
     static Mesh* CreateCubeWithTangents(GraphicsDevice* device);
+    static Mesh* CreatePlaneWithTangents(GraphicsDevice* device, float size = 10.0f, float uvScale = 1.0f);
 
     // Drawing
     void Draw(CommandList* commandList);

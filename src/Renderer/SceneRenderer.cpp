@@ -1,4 +1,12 @@
 #include "SceneRenderer.h"
+#include <cfloat>
+
+// Structure for shadow pass per-object data
+struct ShadowPassConstants
+{
+    XMFLOAT4X4 lightViewProj;
+    XMFLOAT4X4 model;
+};
 
 SceneRenderer::SceneRenderer(GraphicsDevice* device)
     : m_device(device)
@@ -21,6 +29,13 @@ bool SceneRenderer::Initialize()
     // Create lighting constant buffer
     m_lightingCB = std::make_unique<Buffer>(m_device);
     if (!m_lightingCB->Create(sizeof(SceneLightingData), 0, BufferUsage::Constant))
+    {
+        return false;
+    }
+
+    // Create shadow pass constant buffer
+    m_shadowPassCB = std::make_unique<Buffer>(m_device);
+    if (!m_shadowPassCB->Create(sizeof(ShadowPassConstants), 0, BufferUsage::Constant))
     {
         return false;
     }
@@ -114,19 +129,120 @@ void SceneRenderer::Render(CommandList* commandList, DescriptorHeap* srvHeap)
         // Root param 2: Lighting constant buffer (b2)
         commandList->SetGraphicsRootConstantBufferView(2, m_lightingCB->GetGPUVirtualAddress());
 
-        // Root param 3: Albedo texture (t0)
-        if (material && material->GetAlbedoTexture())
+        // Root param 3: Shadow constants (b3)
+        if (m_shadowCB)
         {
-            commandList->SetGraphicsRootDescriptorTable(3, material->GetAlbedoSRV().gpu);
+            commandList->SetGraphicsRootConstantBufferView(3, m_shadowCB->GetGPUVirtualAddress());
         }
 
-        // Root param 4: Normal map (t1)
+        // Root param 4: Albedo texture (t0)
+        if (material && material->GetAlbedoTexture())
+        {
+            commandList->SetGraphicsRootDescriptorTable(4, material->GetAlbedoSRV().gpu);
+        }
+
+        // Root param 5: Normal map (t1)
         if (material && material->GetNormalTexture())
         {
-            commandList->SetGraphicsRootDescriptorTable(4, material->GetNormalSRV().gpu);
+            commandList->SetGraphicsRootDescriptorTable(5, material->GetNormalSRV().gpu);
+        }
+
+        // Root param 6: Shadow map (t2)
+        if (m_shadowMap)
+        {
+            commandList->SetGraphicsRootDescriptorTable(6, m_shadowMap->GetSRV().gpu);
         }
 
         // Draw mesh
         renderer->mesh->Draw(commandList);
     }
+}
+
+void SceneRenderer::RenderShadowPass(CommandList* commandList)
+{
+    if (!m_scene || !m_shadowMap || !m_shadowPassCB)
+        return;
+
+    // Get component pools
+    auto* transformPool = m_scene->GetComponentPool<Transform>();
+    auto* rendererPool = m_scene->GetComponentPool<MeshRenderer>();
+
+    if (!transformPool || !rendererPool)
+        return;
+
+    // Get light view-projection matrix
+    XMMATRIX lightViewProj = m_shadowMap->GetLightViewProjection();
+
+    // Iterate over all entities with MeshRenderer
+    const auto& renderableEntities = rendererPool->GetEntities();
+    for (Entity entity : renderableEntities)
+    {
+        MeshRenderer* renderer = rendererPool->Get(entity);
+        if (!renderer || !renderer->IsValid() || !renderer->visible)
+            continue;
+
+        Transform* transform = m_scene->GetComponent<Transform>(entity);
+        if (!transform)
+            continue;
+
+        // Get world matrix from transform
+        XMMATRIX worldMatrix = transform->GetWorldMatrix();
+
+        // Calculate final transform: model * lightViewProj
+        XMMATRIX finalTransform = worldMatrix * lightViewProj;
+
+        // Update shadow pass constants (just the combined MVP from light's view)
+        ShadowConstants shadowConst;
+        XMStoreFloat4x4(&shadowConst.lightViewProj, XMMatrixTranspose(finalTransform));
+        m_shadowPassCB->UpdateData(&shadowConst, sizeof(ShadowConstants));
+
+        // Bind shadow constant buffer (root param 0 for shadow pass)
+        commandList->SetGraphicsRootConstantBufferView(0, m_shadowPassCB->GetGPUVirtualAddress());
+
+        // Draw mesh
+        renderer->mesh->Draw(commandList);
+    }
+}
+
+void SceneRenderer::GetSceneBounds(XMFLOAT3& center, float& radius) const
+{
+    if (!m_scene)
+    {
+        center = XMFLOAT3(0.0f, 0.0f, 0.0f);
+        radius = 10.0f;
+        return;
+    }
+
+    auto* transformPool = m_scene->GetComponentPool<Transform>();
+    if (!transformPool || transformPool->GetEntities().empty())
+    {
+        center = XMFLOAT3(0.0f, 0.0f, 0.0f);
+        radius = 10.0f;
+        return;
+    }
+
+    // Calculate bounding sphere of all transforms
+    XMVECTOR minBounds = XMVectorSet(FLT_MAX, FLT_MAX, FLT_MAX, 0.0f);
+    XMVECTOR maxBounds = XMVectorSet(-FLT_MAX, -FLT_MAX, -FLT_MAX, 0.0f);
+
+    const auto& entities = transformPool->GetEntities();
+    for (Entity entity : entities)
+    {
+        Transform* transform = transformPool->Get(entity);
+        if (transform)
+        {
+            XMFLOAT3 pos = transform->GetWorldPosition();
+            XMVECTOR posVec = XMLoadFloat3(&pos);
+            minBounds = XMVectorMin(minBounds, posVec);
+            maxBounds = XMVectorMax(maxBounds, posVec);
+        }
+    }
+
+    // Calculate center and radius
+    XMVECTOR centerVec = XMVectorScale(XMVectorAdd(minBounds, maxBounds), 0.5f);
+    XMStoreFloat3(&center, centerVec);
+
+    // Radius is half diagonal plus some padding for object sizes
+    XMVECTOR diagonal = XMVectorSubtract(maxBounds, minBounds);
+    radius = XMVectorGetX(XMVector3Length(diagonal)) * 0.5f + 2.0f;  // +2 for object bounds
 }

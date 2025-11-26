@@ -10,6 +10,7 @@ add_executable(dx_engine
 
     # Core
     src/Core/Types.h
+    src/Core/Timer.h
 
     # RHI (Render Hardware Interface)
     src/RHI/Device.h
@@ -51,6 +52,8 @@ add_executable(dx_engine
     src/Renderer/Light.h
     src/Renderer/SceneRenderer.h
     src/Renderer/SceneRenderer.cpp
+    src/Renderer/ShadowMap.h
+    src/Renderer/ShadowMap.cpp
 
     # Scene
     src/Scene/Entity.h
@@ -64,6 +67,8 @@ add_executable(dx_engine
     # Platform
     src/Platform/Window.h
     src/Platform/Window.cpp
+    src/Platform/Input.h
+    src/Platform/Input.cpp
 )
 
 # Find packages

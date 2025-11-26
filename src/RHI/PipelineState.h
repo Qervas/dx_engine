@@ -25,6 +25,7 @@ public:
 
     // Accessors
     ID3D12PipelineState* GetD3D12PipelineState() const { return m_pipelineState.Get(); }
+    ID3D12PipelineState** GetAddressOf() { return m_pipelineState.GetAddressOf(); }
 
 private:
     GraphicsDevice* m_device;

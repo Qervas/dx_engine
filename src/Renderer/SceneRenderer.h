@@ -5,6 +5,7 @@
 #include "../Scene/MeshRenderer.h"
 #include "Camera.h"
 #include "Light.h"
+#include "ShadowMap.h"
 #include "../RHI/Device.h"
 #include "../RHI/CommandList.h"
 #include "../RHI/Buffer.h"
@@ -39,10 +40,19 @@ public:
     // Set lights
     void SetLights(const std::vector<Light>& lights) { m_lights = lights; }
 
+    // Set shadow map for rendering
+    void SetShadowMap(ShadowMap* shadowMap) { m_shadowMap = shadowMap; }
+
+    // Set shadow constant buffer for main pass
+    void SetShadowConstantBuffer(Buffer* shadowCB) { m_shadowCB = shadowCB; }
+
     // Update the scene (transforms, etc.)
     void Update(float deltaTime);
 
-    // Render all visible entities
+    // Render shadow pass (depth only)
+    void RenderShadowPass(CommandList* commandList);
+
+    // Render all visible entities (main pass)
     void Render(CommandList* commandList, DescriptorHeap* srvHeap);
 
     // Set rendering pipeline
@@ -52,11 +62,18 @@ public:
         m_pipelineState = pso;
     }
 
+    // Get scene bounds for shadow map calculation
+    void GetSceneBounds(XMFLOAT3& center, float& radius) const;
+
 private:
     GraphicsDevice* m_device = nullptr;
     Scene* m_scene = nullptr;
     Camera* m_camera = nullptr;
     std::vector<Light> m_lights;
+
+    // Shadow mapping
+    ShadowMap* m_shadowMap = nullptr;
+    Buffer* m_shadowCB = nullptr;
 
     // Rendering resources
     RootSignature* m_rootSignature = nullptr;
@@ -67,6 +84,9 @@ private:
 
     // Scene lighting constant buffer
     std::unique_ptr<Buffer> m_lightingCB;
+
+    // Shadow pass constant buffer (light view-proj per object)
+    std::unique_ptr<Buffer> m_shadowPassCB;
 
     // Max entities we can render in one batch
     static constexpr uint32_t MAX_RENDER_OBJECTS = 1024;

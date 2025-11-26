@@ -11,6 +11,8 @@ add_executable(dx_engine
     # Core
     src/Core/Types.h
     src/Core/Timer.h
+    src/Core/ResourceManager.h
+    src/Core/ResourceManager.cpp
 
     # RHI (Render Hardware Interface)
     src/RHI/Device.h
@@ -56,6 +58,8 @@ add_executable(dx_engine
     src/Renderer/ShadowMap.cpp
     src/Renderer/DebugRenderer.h
     src/Renderer/DebugRenderer.cpp
+    src/Renderer/ModelLoader.h
+    src/Renderer/ModelLoader.cpp
 
     # Scene
     src/Scene/Entity.h
@@ -83,10 +87,15 @@ add_executable(dx_engine
     src/Platform/Window.cpp
     src/Platform/Input.h
     src/Platform/Input.cpp
+
+    # UI
+    src/UI/ImGuiRenderer.h
+    src/UI/ImGuiRenderer.cpp
 )
 
 # Find packages
 find_package(Stb REQUIRED)
+find_package(imgui CONFIG REQUIRED)
 
 # Define UNICODE for wide character support
 target_compile_definitions(dx_engine PRIVATE UNICODE _UNICODE)
@@ -94,11 +103,12 @@ target_compile_definitions(dx_engine PRIVATE UNICODE _UNICODE)
 # Include directories
 target_include_directories(dx_engine PRIVATE ${Stb_INCLUDE_DIR})
 
-# Link DirectX 12 libraries
+# Link DirectX 12 libraries and ImGui
 target_link_libraries(dx_engine
     d3d12.lib
     dxgi.lib
     d3dcompiler.lib
+    imgui::imgui
 )
 
 # Set subsystem to Windows

@@ -26,6 +26,8 @@
 #include "RenderGraph/MainPass.h"
 #include "RenderGraph/DebugPass.h"
 #include "Renderer/DebugRenderer.h"
+#include "UI/ImGuiRenderer.h"
+#include <imgui.h>
 #include <memory>
 #include <DirectXMath.h>
 
@@ -34,6 +36,9 @@ using namespace DirectX;
 // Application constants
 constexpr uint32_t WINDOW_WIDTH = 1280;
 constexpr uint32_t WINDOW_HEIGHT = 720;
+constexpr float CAMERA_FOV = 60.0f;
+constexpr float CAMERA_NEAR = 0.1f;
+constexpr float CAMERA_FAR = 100.0f;
 
 class Application
 {
@@ -93,7 +98,7 @@ public:
         // Initialize camera - positioned to see ground and shadows
         m_camera = std::make_unique<Camera>();
         m_camera->SetPosition(XMFLOAT3(0.0f, 5.0f, -10.0f));
-        m_camera->SetPerspective(60.0f, (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT, 0.1f, 100.0f);
+        m_camera->SetPerspective(CAMERA_FOV, (float)m_window.GetWidth() / (float)m_window.GetHeight(), CAMERA_NEAR, CAMERA_FAR);
 
         // Initialize scene lights
         InitializeLights();
@@ -111,6 +116,13 @@ public:
             return false;
         }
         m_debugRenderer->SetCamera(m_camera.get());
+
+        // Initialize ImGui
+        m_imguiRenderer = std::make_unique<ImGuiRenderer>(m_device.get());
+        if (!m_imguiRenderer->Initialize(&m_window, m_srvHeap.get(), 2))
+        {
+            return false;
+        }
 
         // Initialize render graph
         if (!InitializeRenderGraph())
@@ -458,12 +470,35 @@ public:
         m_lights[1].SetRange(20.0f);
     }
 
+    void OnResize(uint32_t width, uint32_t height)
+    {
+        if (width == 0 || height == 0)
+            return;
+
+        // Wait for GPU to finish all pending work
+        m_commandQueue->Flush();
+
+        // Resize swap chain buffers
+        m_swapChain->Resize(width, height);
+
+        // Update camera aspect ratio
+        float aspectRatio = (float)width / (float)height;
+        m_camera->SetPerspective(CAMERA_FOV, aspectRatio, CAMERA_NEAR, CAMERA_FAR);
+    }
+
     void Run()
     {
         m_timer.Reset();
 
         while (m_window.ProcessMessages())
         {
+            // Handle window resize
+            if (m_window.WasResized())
+            {
+                OnResize(m_window.GetWidth(), m_window.GetHeight());
+                m_window.ClearResizeFlag();
+            }
+
             m_timer.Tick();
             Input::Get().Update();
 
@@ -479,8 +514,23 @@ public:
     {
         float deltaTime = m_timer.GetDeltaTime();
 
-        // Process camera FPS controls
-        m_camera->ProcessFPSInput(deltaTime, 5.0f, 0.003f);
+        // Begin ImGui frame
+        m_imguiRenderer->BeginFrame();
+
+        // Show ImGui demo window for testing
+        ImGui::ShowDemoWindow();
+
+        // Simple stats window
+        ImGui::Begin("Stats");
+        ImGui::Text("FPS: %.1f", m_timer.GetFPS());
+        ImGui::Text("Frame Time: %.3f ms", deltaTime * 1000.0f);
+        ImGui::End();
+
+        // Process camera FPS controls (only if ImGui doesn't want input)
+        if (!m_imguiRenderer->WantCaptureMouse())
+        {
+            m_camera->ProcessFPSInput(deltaTime, 5.0f, 0.003f);
+        }
 
         // Scene is static - no rotation
 
@@ -573,6 +623,9 @@ public:
         // End frame for render graph
         m_renderGraph->EndFrame();
 
+        // Render ImGui (after scene, before present)
+        m_imguiRenderer->EndFrame(m_commandList.get());
+
         // Transition back buffer to present state
         m_commandList->TransitionBarrier(
             backBuffer,
@@ -610,6 +663,9 @@ public:
 
         // Debug renderer
         m_debugRenderer.reset();
+
+        // ImGui
+        m_imguiRenderer.reset();
 
         // Scene resources
         m_sceneRenderer.reset();
@@ -680,6 +736,9 @@ private:
 
     // Debug renderer
     std::unique_ptr<DebugRenderer> m_debugRenderer;
+
+    // ImGui
+    std::unique_ptr<ImGuiRenderer> m_imguiRenderer;
 
     // Scene lights
     std::vector<Light> m_lights;

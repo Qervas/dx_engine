@@ -175,6 +175,89 @@ void SwapChain::Shutdown()
     m_swapChain.Reset();
 }
 
+void SwapChain::Resize(uint32_t width, uint32_t height)
+{
+    if (width == 0 || height == 0)
+        return;
+
+    if (width == m_width && height == m_height)
+        return;
+
+    m_width = width;
+    m_height = height;
+
+    // Release existing render targets
+    for (auto& rt : m_renderTargets)
+    {
+        rt.Reset();
+    }
+    m_depthStencilBuffer.Reset();
+
+    // Resize swap chain buffers
+    HRESULT hr = m_swapChain->ResizeBuffers(
+        FRAME_COUNT,
+        m_width,
+        m_height,
+        DXGI_FORMAT_R8G8B8A8_UNORM,
+        0
+    );
+
+    if (FAILED(hr))
+    {
+        MessageBox(nullptr, L"Failed to resize swap chain", L"Error", MB_OK);
+        return;
+    }
+
+    m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
+
+    // Recreate render target views
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    for (UINT i = 0; i < FRAME_COUNT; i++)
+    {
+        hr = m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_renderTargets[i]));
+        m_device->GetD3D12Device()->CreateRenderTargetView(m_renderTargets[i].Get(), nullptr, rtvHandle);
+        rtvHandle.ptr += m_rtvDescriptorSize;
+    }
+
+    // Recreate depth stencil buffer
+    D3D12_RESOURCE_DESC depthDesc = {};
+    depthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    depthDesc.Width = m_width;
+    depthDesc.Height = m_height;
+    depthDesc.DepthOrArraySize = 1;
+    depthDesc.MipLevels = 1;
+    depthDesc.Format = DXGI_FORMAT_D32_FLOAT;
+    depthDesc.SampleDesc.Count = 1;
+    depthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+    D3D12_CLEAR_VALUE depthClearValue = {};
+    depthClearValue.Format = DXGI_FORMAT_D32_FLOAT;
+    depthClearValue.DepthStencil.Depth = 1.0f;
+
+    D3D12_HEAP_PROPERTIES heapProps = {};
+    heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    m_device->GetD3D12Device()->CreateCommittedResource(
+        &heapProps,
+        D3D12_HEAP_FLAG_NONE,
+        &depthDesc,
+        D3D12_RESOURCE_STATE_DEPTH_WRITE,
+        &depthClearValue,
+        IID_PPV_ARGS(&m_depthStencilBuffer)
+    );
+
+    // Recreate depth stencil view
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+    dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+    dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+
+    m_device->GetD3D12Device()->CreateDepthStencilView(
+        m_depthStencilBuffer.Get(),
+        &dsvDesc,
+        m_dsvHeap->GetCPUDescriptorHandleForHeapStart()
+    );
+}
+
 void SwapChain::Present(bool vsync)
 {
     m_swapChain->Present(vsync ? 1 : 0, 0);

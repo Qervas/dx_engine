@@ -16,6 +16,7 @@ public:
 
     bool Initialize();
     void Shutdown();
+    void Resize(uint32_t width, uint32_t height);
 
     void Present(bool vsync = true);
     uint32_t GetCurrentBackBufferIndex() const;

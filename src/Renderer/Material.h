@@ -5,6 +5,7 @@
 #include "../RHI/DescriptorHeap.h"
 #include <DirectXMath.h>
 #include <memory>
+#include <string>
 
 using namespace DirectX;
 
@@ -43,6 +44,26 @@ public:
     // Update constant buffer if properties changed
     void UpdateConstants();
 
+    // Material name
+    void SetName(const std::string& name) { m_name = name; }
+    const std::string& GetName() const { return m_name; }
+
+    // Load/Save material definition file (.mat format)
+    // Format: key=value pairs, one per line
+    // albedo=1.0,1.0,1.0
+    // metallic=0.0
+    // roughness=0.5
+    // albedo_texture=path/to/texture.png
+    // normal_texture=path/to/normal.png
+    bool LoadFromFile(const std::string& filepath);
+    bool SaveToFile(const std::string& filepath) const;
+
+    // Texture paths (for serialization)
+    void SetAlbedoTexturePath(const std::string& path) { m_albedoTexturePath = path; }
+    void SetNormalTexturePath(const std::string& path) { m_normalTexturePath = path; }
+    const std::string& GetAlbedoTexturePath() const { return m_albedoTexturePath; }
+    const std::string& GetNormalTexturePath() const { return m_normalTexturePath; }
+
     // Accessors
     const MaterialProperties& GetProperties() const { return m_properties; }
     Buffer* GetConstantBuffer() const { return m_constantBuffer.get(); }
@@ -64,11 +85,17 @@ private:
     MaterialProperties m_properties;
     std::unique_ptr<Buffer> m_constantBuffer;
     bool m_dirty = true;
+    std::string m_name;
 
     // Texture resources (optional)
     Texture* m_albedoTexture = nullptr;
     Texture* m_normalTexture = nullptr;
     Texture* m_metallicRoughnessTexture = nullptr;
+
+    // Texture paths (for serialization)
+    std::string m_albedoTexturePath;
+    std::string m_normalTexturePath;
+    std::string m_metallicRoughnessTexturePath;
 
     DescriptorHandle m_albedoSRV = {};
     DescriptorHandle m_normalSRV = {};

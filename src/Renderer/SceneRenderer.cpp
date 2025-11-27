@@ -1,5 +1,6 @@
 #include "SceneRenderer.h"
 #include "IBL.h"
+#include "SSAO.h"
 #include <cfloat>
 
 // Structure for shadow pass per-object data
@@ -201,6 +202,12 @@ void SceneRenderer::Render(CommandList* commandList, DescriptorHeap* srvHeap)
             {
                 commandList->SetGraphicsRootDescriptorTable(11, m_ibl->GetBRDFLUTSRV().gpu);
             }
+
+            // Root param 12: SSAO texture (t7) - only if SSAO is enabled
+            if (m_ssao)
+            {
+                commandList->SetGraphicsRootDescriptorTable(12, m_ssao->GetSSAOSRV().gpu);
+            }
         }
         else
         {
@@ -322,4 +329,56 @@ void SceneRenderer::GetSceneBounds(XMFLOAT3& center, float& radius) const
     // Radius is half diagonal plus some padding for object sizes
     XMVECTOR diagonal = XMVectorSubtract(maxBounds, minBounds);
     radius = XMVectorGetX(XMVector3Length(diagonal)) * 0.5f + 2.0f;  // +2 for object bounds
+}
+
+void SceneRenderer::RenderGBuffer(CommandList* commandList, RootSignature* rootSig, PipelineState* pso)
+{
+    if (!m_scene || !m_camera)
+        return;
+
+    // Set pipeline state
+    commandList->SetPipelineState(pso->GetD3D12PipelineState());
+    commandList->SetGraphicsRootSignature(rootSig->GetD3D12RootSignature());
+    commandList->SetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    // Get view and projection matrices
+    XMMATRIX viewMatrix = m_camera->GetViewMatrix();
+    XMMATRIX projMatrix = m_camera->GetProjectionMatrix();
+
+    // Get component pools
+    auto* transformPool = m_scene->GetComponentPool<Transform>();
+    auto* rendererPool = m_scene->GetComponentPool<MeshRenderer>();
+
+    if (!transformPool || !rendererPool)
+        return;
+
+    // Iterate over all entities with MeshRenderer
+    const auto& renderableEntities = rendererPool->GetEntities();
+    for (Entity entity : renderableEntities)
+    {
+        MeshRenderer* renderer = rendererPool->Get(entity);
+        if (!renderer || !renderer->IsValid() || !renderer->visible)
+            continue;
+
+        Transform* transform = m_scene->GetComponent<Transform>(entity);
+        if (!transform)
+            continue;
+
+        // Get world matrix from transform
+        XMMATRIX worldMatrix = transform->GetWorldMatrix();
+
+        // Update per-object constants
+        PerObjectConstants constants;
+        XMStoreFloat4x4(&constants.model, XMMatrixTranspose(worldMatrix));
+        XMStoreFloat4x4(&constants.view, XMMatrixTranspose(viewMatrix));
+        XMStoreFloat4x4(&constants.projection, XMMatrixTranspose(projMatrix));
+
+        m_perObjectCB->UpdateData(&constants, sizeof(PerObjectConstants));
+
+        // Bind per-object constant buffer (root param 0 for G-Buffer pass)
+        commandList->SetGraphicsRootConstantBufferView(0, m_perObjectCB->GetGPUVirtualAddress());
+
+        // Draw mesh
+        renderer->mesh->Draw(commandList);
+    }
 }

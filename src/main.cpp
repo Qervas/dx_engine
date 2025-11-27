@@ -26,10 +26,14 @@
 #include "RenderGraph/MainPass.h"
 #include "RenderGraph/DebugPass.h"
 #include "RenderGraph/SkyboxPass.h"
+#include "RenderGraph/GBufferPass.h"
+#include "RenderGraph/SSAOPass.h"
 #include "Renderer/DebugRenderer.h"
 #include "Renderer/Skybox.h"
 #include "Renderer/CubemapLoader.h"
 #include "Renderer/IBL.h"
+#include "Renderer/GBuffer.h"
+#include "Renderer/SSAO.h"
 #include "RHI/CubemapTexture.h"
 #include "UI/ImGuiRenderer.h"
 #include <imgui.h>
@@ -145,6 +149,15 @@ public:
         m_sceneRenderer->SetEnvironmentMap(m_skyCubemap.get());
         m_sceneRenderer->SetIBL(m_ibl.get());
 
+        // Initialize SSAO
+        if (!InitializeSSAO())
+        {
+            return false;
+        }
+
+        // Set SSAO for scene renderer (after SSAO is initialized)
+        m_sceneRenderer->SetSSAO(m_ssao.get());
+
         // Initialize render graph
         if (!InitializeRenderGraph())
         {
@@ -161,6 +174,16 @@ public:
 
         // Create shadow pass
         m_shadowPass = m_renderGraph->AddPass<ShadowPass>(m_shadowMap.get(), m_sceneRenderer.get());
+
+        // Create G-Buffer pass (renders view-space positions and normals for SSAO)
+        m_gBufferPass = m_renderGraph->AddPass<GBufferPass>(m_device.get(), m_gBuffer.get(), m_sceneRenderer.get(), m_swapChain.get());
+        if (!m_gBufferPass->Initialize())
+        {
+            return false;
+        }
+
+        // Create SSAO pass
+        m_ssaoPass = m_renderGraph->AddPass<SSAOPass>(m_ssao.get(), m_gBuffer.get(), m_camera.get());
 
         // Create main pass
         m_mainPass = m_renderGraph->AddPass<MainPass>(m_sceneRenderer.get(), m_swapChain.get());
@@ -428,7 +451,7 @@ public:
             return false;
         }
 
-        // Compile PBR shaders with shadows and IBL
+        // Compile PBR shaders with shadows, IBL, and SSAO
         m_vertexShader = std::make_unique<Shader>();
         if (!m_vertexShader->CompileFromFile(L"shaders/PBRShadowVS.hlsl", "main", "vs_5_1"))
         {
@@ -436,14 +459,14 @@ public:
         }
 
         m_pixelShader = std::make_unique<Shader>();
-        if (!m_pixelShader->CompileFromFile(L"shaders/PBRIblPS.hlsl", "main", "ps_5_1"))
+        if (!m_pixelShader->CompileFromFile(L"shaders/PBRIblSSAOPS.hlsl", "main", "ps_5_1"))
         {
             return false;
         }
 
-        // Create PBR root signature with IBL
+        // Create PBR root signature with IBL and SSAO
         m_rootSignature = std::make_unique<RootSignature>(m_device.get());
-        if (!m_rootSignature->CreateForPBRWithIBL())
+        if (!m_rootSignature->CreateForPBRWithSSAO())
         {
             return false;
         }
@@ -544,6 +567,32 @@ public:
         return true;
     }
 
+    bool InitializeSSAO()
+    {
+        // Create RTV heap for G-Buffer render targets
+        m_rtvHeap = std::make_unique<DescriptorHeap>(m_device.get(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 16, false);
+        if (!m_rtvHeap->Initialize())
+        {
+            return false;
+        }
+
+        // Create G-Buffer
+        m_gBuffer = std::make_unique<GBuffer>(m_device.get());
+        if (!m_gBuffer->Initialize(m_window.GetWidth(), m_window.GetHeight(), m_srvHeap.get(), m_rtvHeap.get()))
+        {
+            return false;
+        }
+
+        // Create SSAO
+        m_ssao = std::make_unique<SSAO>(m_device.get());
+        if (!m_ssao->Initialize(m_window.GetWidth(), m_window.GetHeight(), m_srvHeap.get(), m_rtvHeap.get()))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
     void OnResize(uint32_t width, uint32_t height)
     {
         if (width == 0 || height == 0)
@@ -554,6 +603,16 @@ public:
 
         // Resize swap chain buffers
         m_swapChain->Resize(width, height);
+
+        // Resize G-Buffer and SSAO
+        if (m_gBuffer)
+        {
+            m_gBuffer->Resize(width, height, m_srvHeap.get(), m_rtvHeap.get());
+        }
+        if (m_ssao)
+        {
+            m_ssao->Resize(width, height, m_srvHeap.get(), m_rtvHeap.get());
+        }
 
         // Update camera aspect ratio
         float aspectRatio = (float)width / (float)height;
@@ -738,6 +797,13 @@ public:
         m_mainPass = nullptr;
         m_skyboxPass = nullptr;
         m_debugPass = nullptr;
+        m_gBufferPass = nullptr;
+        m_ssaoPass = nullptr;
+
+        // SSAO
+        m_ssao.reset();
+        m_gBuffer.reset();
+        m_rtvHeap.reset();
 
         // Skybox and IBL
         m_ibl.reset();
@@ -824,6 +890,13 @@ private:
 
     // Image-Based Lighting
     std::unique_ptr<IBL> m_ibl;
+
+    // SSAO (Screen-Space Ambient Occlusion)
+    std::unique_ptr<GBuffer> m_gBuffer;
+    std::unique_ptr<SSAO> m_ssao;
+    std::unique_ptr<DescriptorHeap> m_rtvHeap;  // For G-Buffer RTVs
+    GBufferPass* m_gBufferPass = nullptr;
+    SSAOPass* m_ssaoPass = nullptr;
 
     // Debug renderer
     std::unique_ptr<DebugRenderer> m_debugRenderer;

@@ -68,6 +68,12 @@ add_executable(dx_engine
     src/Renderer/Skybox.cpp
     src/Renderer/IBL.h
     src/Renderer/IBL.cpp
+    src/Renderer/GBuffer.h
+    src/Renderer/GBuffer.cpp
+    src/Renderer/SSAO.h
+    src/Renderer/SSAO.cpp
+    src/Renderer/SSR.h
+    src/Renderer/SSR.cpp
 
     # Scene
     src/Scene/Entity.h
@@ -91,6 +97,12 @@ add_executable(dx_engine
     src/RenderGraph/DebugPass.cpp
     src/RenderGraph/SkyboxPass.h
     src/RenderGraph/SkyboxPass.cpp
+    src/RenderGraph/GBufferPass.h
+    src/RenderGraph/GBufferPass.cpp
+    src/RenderGraph/SSAOPass.h
+    src/RenderGraph/SSAOPass.cpp
+    src/RenderGraph/SSRPass.h
+    src/RenderGraph/SSRPass.cpp
 
     # Platform
     src/Platform/Window.h

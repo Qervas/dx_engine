@@ -32,6 +32,9 @@ public:
     // Create root signature for PBR with full IBL (irradiance, prefiltered, BRDF LUT)
     bool CreateForPBRWithIBL();
 
+    // Create root signature for PBR with IBL and SSAO
+    bool CreateForPBRWithSSAO();
+
     // Create root signature for skybox rendering (CBV + cubemap texture)
     bool CreateForSkybox();
 

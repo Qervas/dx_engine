@@ -18,6 +18,7 @@
 #include <memory>
 
 class IBL;
+class SSAO;
 
 // MVP constant buffer structure
 struct PerObjectConstants
@@ -56,6 +57,9 @@ public:
     // Set IBL resources for physically-based ambient lighting
     void SetIBL(IBL* ibl) { m_ibl = ibl; }
 
+    // Set SSAO for screen-space ambient occlusion
+    void SetSSAO(SSAO* ssao) { m_ssao = ssao; }
+
     // Update the scene (transforms, etc.)
     void Update(float deltaTime);
 
@@ -64,6 +68,12 @@ public:
 
     // Render all visible entities (main pass)
     void Render(CommandList* commandList, DescriptorHeap* srvHeap);
+
+    // Render G-Buffer (view-space positions and normals) for SSAO
+    void RenderGBuffer(CommandList* commandList, RootSignature* rootSig, PipelineState* pso);
+
+    // Get per-object constant buffer (for G-Buffer pass)
+    Buffer* GetPerObjectConstantBuffer() const { return m_perObjectCB.get(); }
 
     // Set rendering pipeline
     void SetPipeline(RootSignature* rootSig, PipelineState* pso)
@@ -90,6 +100,9 @@ private:
 
     // Image-Based Lighting
     IBL* m_ibl = nullptr;
+
+    // Screen-Space Ambient Occlusion
+    SSAO* m_ssao = nullptr;
 
     // Rendering resources
     RootSignature* m_rootSignature = nullptr;

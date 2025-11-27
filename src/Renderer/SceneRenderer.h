@@ -12,8 +12,12 @@
 #include "../RHI/RootSignature.h"
 #include "../RHI/PipelineState.h"
 #include "../RHI/DescriptorHeap.h"
+#include "../RHI/CubemapTexture.h"
+#include "../RHI/Texture.h"
 #include <vector>
 #include <memory>
+
+class IBL;
 
 // MVP constant buffer structure
 struct PerObjectConstants
@@ -46,6 +50,12 @@ public:
     // Set shadow constant buffer for main pass
     void SetShadowConstantBuffer(Buffer* shadowCB) { m_shadowCB = shadowCB; }
 
+    // Set environment cubemap for reflections
+    void SetEnvironmentMap(CubemapTexture* envMap) { m_environmentMap = envMap; }
+
+    // Set IBL resources for physically-based ambient lighting
+    void SetIBL(IBL* ibl) { m_ibl = ibl; }
+
     // Update the scene (transforms, etc.)
     void Update(float deltaTime);
 
@@ -75,6 +85,12 @@ private:
     ShadowMap* m_shadowMap = nullptr;
     Buffer* m_shadowCB = nullptr;
 
+    // Environment mapping
+    CubemapTexture* m_environmentMap = nullptr;
+
+    // Image-Based Lighting
+    IBL* m_ibl = nullptr;
+
     // Rendering resources
     RootSignature* m_rootSignature = nullptr;
     PipelineState* m_pipelineState = nullptr;
@@ -87,6 +103,9 @@ private:
 
     // Shadow pass constant buffer (light view-proj per object)
     std::unique_ptr<Buffer> m_shadowPassCB;
+
+    // IBL constant buffer
+    std::unique_ptr<Buffer> m_iblCB;
 
     // Max entities we can render in one batch
     static constexpr uint32_t MAX_RENDER_OBJECTS = 1024;

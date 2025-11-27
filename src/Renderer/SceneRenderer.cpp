@@ -1,4 +1,5 @@
 #include "SceneRenderer.h"
+#include "IBL.h"
 #include <cfloat>
 
 // Structure for shadow pass per-object data
@@ -6,6 +7,13 @@ struct ShadowPassConstants
 {
     XMFLOAT4X4 lightViewProj;
     XMFLOAT4X4 model;
+};
+
+// Structure for IBL constants
+struct IBLConstants
+{
+    uint32_t prefilteredMipLevels;
+    float padding[3];
 };
 
 SceneRenderer::SceneRenderer(GraphicsDevice* device)
@@ -36,6 +44,13 @@ bool SceneRenderer::Initialize()
     // Create shadow pass constant buffer
     m_shadowPassCB = std::make_unique<Buffer>(m_device);
     if (!m_shadowPassCB->Create(sizeof(ShadowPassConstants), 0, BufferUsage::Constant))
+    {
+        return false;
+    }
+
+    // Create IBL constant buffer
+    m_iblCB = std::make_unique<Buffer>(m_device);
+    if (!m_iblCB->Create(sizeof(IBLConstants), 0, BufferUsage::Constant))
     {
         return false;
     }
@@ -135,22 +150,84 @@ void SceneRenderer::Render(CommandList* commandList, DescriptorHeap* srvHeap)
             commandList->SetGraphicsRootConstantBufferView(3, m_shadowCB->GetGPUVirtualAddress());
         }
 
-        // Root param 4: Albedo texture (t0)
-        if (material && material->GetAlbedoTexture())
+        // Check if we're using IBL (different root signature layout)
+        if (m_ibl)
         {
-            commandList->SetGraphicsRootDescriptorTable(4, material->GetAlbedoSRV().gpu);
-        }
+            // IBL root signature layout
+            // Root param 4: IBL constants (b4)
+            IBLConstants iblConst;
+            iblConst.prefilteredMipLevels = m_ibl->GetPrefilteredMipLevels();
+            m_iblCB->UpdateData(&iblConst, sizeof(IBLConstants));
+            commandList->SetGraphicsRootConstantBufferView(4, m_iblCB->GetGPUVirtualAddress());
 
-        // Root param 5: Normal map (t1)
-        if (material && material->GetNormalTexture())
-        {
-            commandList->SetGraphicsRootDescriptorTable(5, material->GetNormalSRV().gpu);
-        }
+            // Root param 5: Albedo texture (t0)
+            if (material && material->GetAlbedoTexture())
+            {
+                commandList->SetGraphicsRootDescriptorTable(5, material->GetAlbedoSRV().gpu);
+            }
 
-        // Root param 6: Shadow map (t2)
-        if (m_shadowMap)
+            // Root param 6: Normal map (t1)
+            if (material && material->GetNormalTexture())
+            {
+                commandList->SetGraphicsRootDescriptorTable(6, material->GetNormalSRV().gpu);
+            }
+
+            // Root param 7: Shadow map (t2)
+            if (m_shadowMap)
+            {
+                commandList->SetGraphicsRootDescriptorTable(7, m_shadowMap->GetSRV().gpu);
+            }
+
+            // Root param 8: Environment cubemap (t3)
+            if (m_environmentMap)
+            {
+                commandList->SetGraphicsRootDescriptorTable(8, m_environmentMap->GetSRV().gpu);
+            }
+
+            // Root param 9: Irradiance map (t4)
+            if (m_ibl->GetIrradianceMap())
+            {
+                commandList->SetGraphicsRootDescriptorTable(9, m_ibl->GetIrradianceSRV().gpu);
+            }
+
+            // Root param 10: Prefiltered map (t5)
+            if (m_ibl->GetPrefilteredMap())
+            {
+                commandList->SetGraphicsRootDescriptorTable(10, m_ibl->GetPrefilteredSRV().gpu);
+            }
+
+            // Root param 11: BRDF LUT (t6)
+            if (m_ibl->GetBRDFLUT())
+            {
+                commandList->SetGraphicsRootDescriptorTable(11, m_ibl->GetBRDFLUTSRV().gpu);
+            }
+        }
+        else
         {
-            commandList->SetGraphicsRootDescriptorTable(6, m_shadowMap->GetSRV().gpu);
+            // Non-IBL root signature layout (environment only)
+            // Root param 4: Albedo texture (t0)
+            if (material && material->GetAlbedoTexture())
+            {
+                commandList->SetGraphicsRootDescriptorTable(4, material->GetAlbedoSRV().gpu);
+            }
+
+            // Root param 5: Normal map (t1)
+            if (material && material->GetNormalTexture())
+            {
+                commandList->SetGraphicsRootDescriptorTable(5, material->GetNormalSRV().gpu);
+            }
+
+            // Root param 6: Shadow map (t2)
+            if (m_shadowMap)
+            {
+                commandList->SetGraphicsRootDescriptorTable(6, m_shadowMap->GetSRV().gpu);
+            }
+
+            // Root param 7: Environment cubemap (t3)
+            if (m_environmentMap)
+            {
+                commandList->SetGraphicsRootDescriptorTable(7, m_environmentMap->GetSRV().gpu);
+            }
         }
 
         // Draw mesh

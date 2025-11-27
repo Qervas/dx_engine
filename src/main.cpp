@@ -29,6 +29,7 @@
 #include "Renderer/DebugRenderer.h"
 #include "Renderer/Skybox.h"
 #include "Renderer/CubemapLoader.h"
+#include "Renderer/IBL.h"
 #include "RHI/CubemapTexture.h"
 #include "UI/ImGuiRenderer.h"
 #include <imgui.h>
@@ -134,6 +135,16 @@ public:
             return false;
         }
 
+        // Initialize IBL (must be after skybox since it uses the environment cubemap)
+        if (!InitializeIBL())
+        {
+            return false;
+        }
+
+        // Set environment map and IBL for scene reflections (after skybox and IBL are created)
+        m_sceneRenderer->SetEnvironmentMap(m_skyCubemap.get());
+        m_sceneRenderer->SetIBL(m_ibl.get());
+
         // Initialize render graph
         if (!InitializeRenderGraph())
         {
@@ -185,6 +196,7 @@ public:
         m_sceneRenderer->SetPipeline(m_rootSignature.get(), m_pipelineState.get());
         m_sceneRenderer->SetShadowMap(m_shadowMap.get());
         m_sceneRenderer->SetShadowConstantBuffer(m_shadowConstantBuffer.get());
+        // Environment map set after InitializeSkybox
 
         // Create ground plane
         Entity groundEntity = m_scene->CreateEntity("Ground");
@@ -384,11 +396,11 @@ public:
 
         m_normalTexture->SetSRV(normalSrvHandle);
 
-        // Create material for cubes
+        // Create material for cubes (more metallic to show reflections)
         m_material = std::make_unique<Material>(m_device.get());
-        m_material->SetAlbedo(XMFLOAT3(1.0f, 1.0f, 1.0f));
-        m_material->SetMetallic(0.3f);
-        m_material->SetRoughness(0.7f);
+        m_material->SetAlbedo(XMFLOAT3(0.9f, 0.9f, 0.95f));
+        m_material->SetMetallic(0.8f);   // More metallic for visible reflections
+        m_material->SetRoughness(0.2f);  // Smoother for clearer reflections
         m_material->SetAO(1.0f);
         m_material->SetAlbedoTexture(m_albedoTexture.get(), albedoSrvHandle);
         m_material->SetNormalTexture(m_normalTexture.get(), normalSrvHandle);
@@ -416,7 +428,7 @@ public:
             return false;
         }
 
-        // Compile PBR shaders with shadows
+        // Compile PBR shaders with shadows and IBL
         m_vertexShader = std::make_unique<Shader>();
         if (!m_vertexShader->CompileFromFile(L"shaders/PBRShadowVS.hlsl", "main", "vs_5_1"))
         {
@@ -424,14 +436,14 @@ public:
         }
 
         m_pixelShader = std::make_unique<Shader>();
-        if (!m_pixelShader->CompileFromFile(L"shaders/PBRShadowPS.hlsl", "main", "ps_5_1"))
+        if (!m_pixelShader->CompileFromFile(L"shaders/PBRIblPS.hlsl", "main", "ps_5_1"))
         {
             return false;
         }
 
-        // Create PBR root signature with shadows
+        // Create PBR root signature with IBL
         m_rootSignature = std::make_unique<RootSignature>(m_device.get());
-        if (!m_rootSignature->CreateForPBRWithShadows())
+        if (!m_rootSignature->CreateForPBRWithIBL())
         {
             return false;
         }
@@ -507,6 +519,24 @@ public:
             m_skyCubemap.get(),
             DXGI_FORMAT_R8G8B8A8_UNORM,
             m_swapChain->GetDepthFormat()))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    bool InitializeIBL()
+    {
+        // Create IBL resource manager
+        m_ibl = std::make_unique<IBL>(m_device.get());
+
+        // Generate all IBL textures from the environment cubemap
+        if (!m_ibl->Generate(
+            m_skyCubemap.get(),
+            m_commandList.get(),
+            m_commandQueue.get(),
+            m_srvHeap.get()))
         {
             return false;
         }
@@ -709,7 +739,8 @@ public:
         m_skyboxPass = nullptr;
         m_debugPass = nullptr;
 
-        // Skybox
+        // Skybox and IBL
+        m_ibl.reset();
         m_skybox.reset();
         m_skyCubemap.reset();
 
@@ -790,6 +821,9 @@ private:
     // Skybox
     std::unique_ptr<CubemapTexture> m_skyCubemap;
     std::unique_ptr<Skybox> m_skybox;
+
+    // Image-Based Lighting
+    std::unique_ptr<IBL> m_ibl;
 
     // Debug renderer
     std::unique_ptr<DebugRenderer> m_debugRenderer;

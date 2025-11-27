@@ -26,6 +26,12 @@ public:
     // Create root signature for PBR with shadows (MVP + Material + Lighting + Shadow CBVs + albedo + normal + shadow textures)
     bool CreateForPBRWithShadows();
 
+    // Create root signature for PBR with shadows and environment reflections
+    bool CreateForPBRWithEnvironment();
+
+    // Create root signature for PBR with full IBL (irradiance, prefiltered, BRDF LUT)
+    bool CreateForPBRWithIBL();
+
     // Create root signature for skybox rendering (CBV + cubemap texture)
     bool CreateForSkybox();
 

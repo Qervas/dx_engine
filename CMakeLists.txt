@@ -39,6 +39,8 @@ add_executable(dx_engine
     src/RHI/RootSignature.cpp
     src/RHI/PipelineState.h
     src/RHI/PipelineState.cpp
+    src/RHI/CubemapTexture.h
+    src/RHI/CubemapTexture.cpp
 
     # Renderer
     src/Renderer/Camera.h
@@ -60,6 +62,12 @@ add_executable(dx_engine
     src/Renderer/DebugRenderer.cpp
     src/Renderer/ModelLoader.h
     src/Renderer/ModelLoader.cpp
+    src/Renderer/CubemapLoader.h
+    src/Renderer/CubemapLoader.cpp
+    src/Renderer/Skybox.h
+    src/Renderer/Skybox.cpp
+    src/Renderer/IBL.h
+    src/Renderer/IBL.cpp
 
     # Scene
     src/Scene/Entity.h
@@ -81,6 +89,8 @@ add_executable(dx_engine
     src/RenderGraph/MainPass.cpp
     src/RenderGraph/DebugPass.h
     src/RenderGraph/DebugPass.cpp
+    src/RenderGraph/SkyboxPass.h
+    src/RenderGraph/SkyboxPass.cpp
 
     # Platform
     src/Platform/Window.h

@@ -28,7 +28,9 @@
 #include "RenderGraph/SkyboxPass.h"
 #include "RenderGraph/GBufferPass.h"
 #include "RenderGraph/SSAOPass.h"
+#include "RenderGraph/PostProcessPass.h"
 #include "Renderer/DebugRenderer.h"
+#include "Renderer/PostProcess.h"
 #include "Renderer/Skybox.h"
 #include "Renderer/CubemapLoader.h"
 #include "Renderer/IBL.h"
@@ -158,6 +160,12 @@ public:
         // Set SSAO for scene renderer (after SSAO is initialized)
         m_sceneRenderer->SetSSAO(m_ssao.get());
 
+        // Initialize Post-Processing
+        if (!InitializePostProcess())
+        {
+            return false;
+        }
+
         // Initialize render graph
         if (!InitializeRenderGraph())
         {
@@ -192,8 +200,26 @@ public:
         // Create skybox pass (renders after main scene to use depth buffer for occlusion)
         m_skyboxPass = m_renderGraph->AddPass<SkyboxPass>(m_skybox.get(), m_swapChain.get(), m_camera.get());
 
-        // Create debug pass (renders after skybox)
-        m_debugPass = m_renderGraph->AddPass<DebugPass>(m_debugRenderer.get());
+        // Create post-process pass (renders after skybox, outputs to swap chain)
+        m_postProcessPass = m_renderGraph->AddPass<PostProcessPass>(m_postProcess.get(), m_swapChain.get());
+
+        // Create debug pass (renders after post-processing)
+        m_debugPass = m_renderGraph->AddPass<DebugPass>(m_debugRenderer.get(), m_swapChain.get());
+
+        // Configure MainPass and SkyboxPass to render to HDR texture
+        if (m_postProcess)
+        {
+            m_mainPass->SetCustomRTV(
+                m_postProcess->GetHDRRTV(),
+                m_window.GetWidth(),
+                m_window.GetHeight()
+            );
+            m_skyboxPass->SetCustomRTV(
+                m_postProcess->GetHDRRTV(),
+                m_window.GetWidth(),
+                m_window.GetHeight()
+            );
+        }
 
         // Compile the graph
         m_renderGraph->Compile();
@@ -569,8 +595,8 @@ public:
 
     bool InitializeSSAO()
     {
-        // Create RTV heap for G-Buffer render targets
-        m_rtvHeap = std::make_unique<DescriptorHeap>(m_device.get(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 16, false);
+        // Create RTV heap for G-Buffer and PostProcess render targets
+        m_rtvHeap = std::make_unique<DescriptorHeap>(m_device.get(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 32, false);
         if (!m_rtvHeap->Initialize())
         {
             return false;
@@ -589,6 +615,26 @@ public:
         {
             return false;
         }
+
+        return true;
+    }
+
+    bool InitializePostProcess()
+    {
+        // Create Post-Process system
+        m_postProcess = std::make_unique<PostProcess>(m_device.get());
+        if (!m_postProcess->Initialize(m_window.GetWidth(), m_window.GetHeight(), m_srvHeap.get(), m_rtvHeap.get()))
+        {
+            return false;
+        }
+
+        // Configure default settings
+        m_postProcess->SetExposure(1.0f);
+        m_postProcess->SetGamma(2.2f);
+        m_postProcess->SetToneMapMode(ToneMapMode::ACES);
+        m_postProcess->SetBloomEnabled(true);
+        m_postProcess->SetBloomIntensity(0.3f);   // Lower intensity for subtle bloom
+        m_postProcess->SetBloomThreshold(1.5f);   // Higher threshold - only very bright areas bloom
 
         return true;
     }
@@ -612,6 +658,22 @@ public:
         if (m_ssao)
         {
             m_ssao->Resize(width, height, m_srvHeap.get(), m_rtvHeap.get());
+        }
+
+        // Resize Post-Processing
+        if (m_postProcess)
+        {
+            m_postProcess->Resize(width, height, m_srvHeap.get(), m_rtvHeap.get());
+
+            // Update custom RTVs for MainPass and SkyboxPass
+            if (m_mainPass)
+            {
+                m_mainPass->SetCustomRTV(m_postProcess->GetHDRRTV(), width, height);
+            }
+            if (m_skyboxPass)
+            {
+                m_skyboxPass->SetCustomRTV(m_postProcess->GetHDRRTV(), width, height);
+            }
         }
 
         // Update camera aspect ratio
@@ -658,6 +720,91 @@ public:
         ImGui::Text("FPS: %.1f", m_timer.GetFPS());
         ImGui::Text("Frame Time: %.3f ms", deltaTime * 1000.0f);
         ImGui::End();
+
+        // Post-Processing controls
+        if (m_postProcess)
+        {
+            ImGui::Begin("Post-Processing");
+
+            // Master enable/disable toggle
+            if (ImGui::Checkbox("Enable Post-Processing", &m_postProcessEnabled))
+            {
+                // Update render targets and pass state when toggling
+                m_postProcessPass->SetEnabled(m_postProcessEnabled);
+
+                if (m_postProcessEnabled)
+                {
+                    m_mainPass->SetCustomRTV(
+                        m_postProcess->GetHDRRTV(),
+                        m_window.GetWidth(),
+                        m_window.GetHeight()
+                    );
+                    m_skyboxPass->SetCustomRTV(
+                        m_postProcess->GetHDRRTV(),
+                        m_window.GetWidth(),
+                        m_window.GetHeight()
+                    );
+                }
+                else
+                {
+                    m_mainPass->ClearCustomRTV();
+                    m_skyboxPass->ClearCustomRTV();
+                }
+            }
+
+            if (m_postProcessEnabled)
+            {
+                ImGui::Separator();
+
+                // Exposure
+                float exposure = m_postProcess->GetExposure();
+                if (ImGui::SliderFloat("Exposure", &exposure, 0.1f, 5.0f))
+                {
+                    m_postProcess->SetExposure(exposure);
+                }
+
+                // Gamma
+                float gamma = m_postProcess->GetGamma();
+                if (ImGui::SliderFloat("Gamma", &gamma, 1.0f, 3.0f))
+                {
+                    m_postProcess->SetGamma(gamma);
+                }
+
+                // Tone mapping mode
+                const char* toneMapModes[] = { "None", "Reinhard", "ACES", "Uncharted 2" };
+                int currentMode = static_cast<int>(m_postProcess->GetToneMapMode());
+                if (ImGui::Combo("Tone Mapping", &currentMode, toneMapModes, IM_ARRAYSIZE(toneMapModes)))
+                {
+                    m_postProcess->SetToneMapMode(static_cast<ToneMapMode>(currentMode));
+                }
+
+                ImGui::Separator();
+
+                // Bloom settings
+                bool bloomEnabled = m_postProcess->IsBloomEnabled();
+                if (ImGui::Checkbox("Bloom", &bloomEnabled))
+                {
+                    m_postProcess->SetBloomEnabled(bloomEnabled);
+                }
+
+                if (bloomEnabled)
+                {
+                    float bloomIntensity = m_postProcess->GetBloomIntensity();
+                    if (ImGui::SliderFloat("Bloom Intensity", &bloomIntensity, 0.0f, 2.0f))
+                    {
+                        m_postProcess->SetBloomIntensity(bloomIntensity);
+                    }
+
+                    float bloomThreshold = m_postProcess->GetBloomThreshold();
+                    if (ImGui::SliderFloat("Bloom Threshold", &bloomThreshold, 0.0f, 5.0f))
+                    {
+                        m_postProcess->SetBloomThreshold(bloomThreshold);
+                    }
+                }
+            }
+
+            ImGui::End();
+        }
 
         // Process camera FPS controls (only if ImGui doesn't want input)
         if (!m_imguiRenderer->WantCaptureMouse())
@@ -746,6 +893,9 @@ public:
         // Configure skybox pass
         m_skyboxPass->SetBackBufferIndex(backBufferIndex);
 
+        // Configure debug pass
+        m_debugPass->SetBackBufferIndex(backBufferIndex);
+
         // Transition back buffer to render target state
         m_commandList->TransitionBarrier(
             backBuffer,
@@ -799,6 +949,10 @@ public:
         m_debugPass = nullptr;
         m_gBufferPass = nullptr;
         m_ssaoPass = nullptr;
+        m_postProcessPass = nullptr;
+
+        // Post-Processing
+        m_postProcess.reset();
 
         // SSAO
         m_ssao.reset();
@@ -894,9 +1048,14 @@ private:
     // SSAO (Screen-Space Ambient Occlusion)
     std::unique_ptr<GBuffer> m_gBuffer;
     std::unique_ptr<SSAO> m_ssao;
-    std::unique_ptr<DescriptorHeap> m_rtvHeap;  // For G-Buffer RTVs
+    std::unique_ptr<DescriptorHeap> m_rtvHeap;  // For G-Buffer and PostProcess RTVs
     GBufferPass* m_gBufferPass = nullptr;
     SSAOPass* m_ssaoPass = nullptr;
+
+    // Post-Processing (HDR, Bloom, Tone Mapping)
+    std::unique_ptr<PostProcess> m_postProcess;
+    PostProcessPass* m_postProcessPass = nullptr;
+    bool m_postProcessEnabled = true;
 
     // Debug renderer
     std::unique_ptr<DebugRenderer> m_debugRenderer;

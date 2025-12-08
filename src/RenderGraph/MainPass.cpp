@@ -32,8 +32,23 @@ void MainPass::Execute(CommandList* commandList, DescriptorHeap* srvHeap)
     if (!m_sceneRenderer || !m_swapChain)
         return;
 
-    // Get render targets
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_swapChain->GetRTV(m_backBufferIndex);
+    // Get render targets (use custom RTV if set, otherwise use swap chain)
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv;
+    uint32_t width, height;
+
+    if (m_useCustomRTV)
+    {
+        rtv = m_customRTV;
+        width = m_customWidth;
+        height = m_customHeight;
+    }
+    else
+    {
+        rtv = m_swapChain->GetRTV(m_backBufferIndex);
+        width = m_swapChain->GetWidth();
+        height = m_swapChain->GetHeight();
+    }
+
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = m_swapChain->GetDSV();
 
     // Set render target with depth buffer
@@ -41,11 +56,9 @@ void MainPass::Execute(CommandList* commandList, DescriptorHeap* srvHeap)
 
     // Set viewport and scissor
     commandList->SetViewport(0, 0,
-        static_cast<float>(m_swapChain->GetWidth()),
-        static_cast<float>(m_swapChain->GetHeight()));
-    commandList->SetScissorRect(0, 0,
-        m_swapChain->GetWidth(),
-        m_swapChain->GetHeight());
+        static_cast<float>(width),
+        static_cast<float>(height));
+    commandList->SetScissorRect(0, 0, width, height);
 
     // Clear render target and depth buffer
     commandList->ClearRenderTargetView(rtv, m_clearColor);
@@ -68,4 +81,17 @@ void MainPass::SetShadowResources(ShadowMap* shadowMap, Buffer* shadowCB)
 {
     m_shadowMap = shadowMap;
     m_shadowCB = shadowCB;
+}
+
+void MainPass::SetCustomRTV(D3D12_CPU_DESCRIPTOR_HANDLE rtv, uint32_t width, uint32_t height)
+{
+    m_useCustomRTV = true;
+    m_customRTV = rtv;
+    m_customWidth = width;
+    m_customHeight = height;
+}
+
+void MainPass::ClearCustomRTV()
+{
+    m_useCustomRTV = false;
 }

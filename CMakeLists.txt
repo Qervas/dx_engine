@@ -74,6 +74,8 @@ add_executable(dx_engine
     src/Renderer/SSAO.cpp
     src/Renderer/SSR.h
     src/Renderer/SSR.cpp
+    src/Renderer/PostProcess.h
+    src/Renderer/PostProcess.cpp
 
     # Scene
     src/Scene/Entity.h
@@ -103,6 +105,8 @@ add_executable(dx_engine
     src/RenderGraph/SSAOPass.cpp
     src/RenderGraph/SSRPass.h
     src/RenderGraph/SSRPass.cpp
+    src/RenderGraph/PostProcessPass.h
+    src/RenderGraph/PostProcessPass.cpp
 
     # Platform
     src/Platform/Window.h

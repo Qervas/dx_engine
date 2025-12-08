@@ -22,6 +22,10 @@ public:
     void SetBackBufferIndex(uint32_t index) { m_backBufferIndex = index; }
     void SetCamera(Camera* camera) { m_camera = camera; }
 
+    // Set custom render target (for HDR rendering)
+    void SetCustomRTV(D3D12_CPU_DESCRIPTOR_HANDLE rtv, uint32_t width, uint32_t height);
+    void ClearCustomRTV();
+
 private:
     Skybox* m_skybox = nullptr;
     SwapChain* m_swapChain = nullptr;
@@ -31,4 +35,10 @@ private:
     RGResourceHandle m_depthBufferHandle;
 
     uint32_t m_backBufferIndex = 0;
+
+    // Custom render target override
+    bool m_useCustomRTV = false;
+    D3D12_CPU_DESCRIPTOR_HANDLE m_customRTV = {};
+    uint32_t m_customWidth = 0;
+    uint32_t m_customHeight = 0;
 };

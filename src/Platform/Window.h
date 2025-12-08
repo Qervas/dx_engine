@@ -45,6 +45,10 @@ public:
     void SetMenuChecked(MenuCommand cmd, bool checked);
     bool IsMenuChecked(MenuCommand cmd) const;
 
+    // Mouse capture control - when disabled, clicks won't auto-capture the mouse
+    void SetMouseCaptureEnabled(bool enabled) { m_mouseCaptureEnabled = enabled; }
+    bool IsMouseCaptureEnabled() const { return m_mouseCaptureEnabled; }
+
     // Callbacks
     using ResizeCallback = std::function<void(uint32_t, uint32_t)>;
     using MenuCallback = std::function<void(MenuCommand)>;
@@ -65,6 +69,7 @@ private:
     uint32_t m_height;
     bool m_shouldClose = false;
     bool m_wasResized = false;
+    bool m_mouseCaptureEnabled = true;  // Set to false in menu mode
     ResizeCallback m_resizeCallback;
     MenuCallback m_menuCallback;
 };

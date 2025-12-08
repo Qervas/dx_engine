@@ -29,6 +29,7 @@ public:
     D3D12_CPU_DESCRIPTOR_HANDLE GetDSV() const;
     uint32_t GetWidth() const { return m_width; }
     uint32_t GetHeight() const { return m_height; }
+    uint32_t GetBackBufferCount() const { return FRAME_COUNT; }
     DXGI_FORMAT GetDepthFormat() const { return DXGI_FORMAT_D32_FLOAT; }
 
 private:

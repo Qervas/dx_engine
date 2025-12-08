@@ -8,6 +8,7 @@
 #include "RHI/RootSignature.h"
 #include "RHI/PipelineState.h"
 #include "RHI/DescriptorHeap.h"
+#include "RHI/D2DInterop.h"
 #include "Renderer/Camera.h"
 #include "Renderer/Mesh.h"
 #include "Renderer/Material.h"
@@ -38,6 +39,9 @@
 #include "Renderer/SSAO.h"
 #include "RHI/CubemapTexture.h"
 #include "Core/Log.h"
+#include "Core/AppState.h"
+#include "UI/MainMenu.h"
+#include "UI/PauseMenu.h"
 #include <memory>
 #include <DirectXMath.h>
 
@@ -64,6 +68,21 @@ public:
     }
 
     bool Initialize()
+    {
+        // Phase 1: Minimal initialization for menu
+        if (!InitializeMinimal())
+        {
+            return false;
+        }
+
+        // Start in main menu state
+        m_currentState = AppState::MainMenu;
+        m_window.SetMouseCaptureEnabled(false);  // Don't capture mouse in menu
+
+        return true;
+    }
+
+    bool InitializeMinimal()
     {
         // Initialize window
         if (!m_window.Initialize())
@@ -103,6 +122,41 @@ public:
         {
             return false;
         }
+
+        // Initialize D2D/DirectWrite interop for menu rendering
+        m_d2dInterop = std::make_unique<D2DInterop>(m_device.get(), m_commandQueue.get());
+        if (!m_d2dInterop->Initialize())
+        {
+            return false;
+        }
+
+        // Create wrapped render targets for D2D
+        if (!m_d2dInterop->CreateWrappedRenderTargets(m_swapChain.get()))
+        {
+            return false;
+        }
+
+        // Initialize main menu
+        m_mainMenu = std::make_unique<MainMenu>();
+        if (!m_mainMenu->Initialize(m_d2dInterop.get(), m_window.GetWidth(), m_window.GetHeight()))
+        {
+            return false;
+        }
+
+        // Initialize pause menu
+        m_pauseMenu = std::make_unique<PauseMenu>();
+        if (!m_pauseMenu->Initialize(m_d2dInterop.get(), m_window.GetWidth(), m_window.GetHeight()))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    bool InitializeGameResources()
+    {
+        if (m_gameResourcesLoaded)
+            return true;
 
         // Initialize rendering resources
         if (!InitializeRenderingResources())
@@ -169,6 +223,7 @@ public:
             return false;
         }
 
+        m_gameResourcesLoaded = true;
         return true;
     }
 
@@ -646,8 +701,30 @@ public:
         // Wait for GPU to finish all pending work
         m_commandQueue->Flush();
 
+        // Release D2D resources before resize
+        if (m_d2dInterop)
+        {
+            m_d2dInterop->ReleaseWrappedRenderTargets();
+        }
+
         // Resize swap chain buffers
         m_swapChain->Resize(width, height);
+
+        // Recreate D2D wrapped render targets
+        if (m_d2dInterop)
+        {
+            m_d2dInterop->CreateWrappedRenderTargets(m_swapChain.get());
+        }
+
+        // Resize menus
+        if (m_mainMenu)
+        {
+            m_mainMenu->OnResize(width, height);
+        }
+        if (m_pauseMenu)
+        {
+            m_pauseMenu->OnResize(width, height);
+        }
 
         // Resize G-Buffer and SSAO
         if (m_gBuffer)
@@ -675,9 +752,12 @@ public:
             }
         }
 
-        // Update camera aspect ratio
-        float aspectRatio = (float)width / (float)height;
-        m_camera->SetPerspective(CAMERA_FOV, aspectRatio, CAMERA_NEAR, CAMERA_FAR);
+        // Update camera aspect ratio (only if camera exists)
+        if (m_camera)
+        {
+            float aspectRatio = (float)width / (float)height;
+            m_camera->SetPerspective(CAMERA_FOV, aspectRatio, CAMERA_NEAR, CAMERA_FAR);
+        }
     }
 
     void Run()
@@ -696,12 +776,210 @@ public:
             m_timer.Tick();
             Input::Get().Update();
 
-            Update();
-            Render();
+            // Dispatch based on current state
+            switch (m_currentState)
+            {
+            case AppState::MainMenu:
+                UpdateMenu();
+                RenderMenu();
+                break;
+
+            case AppState::Loading:
+                UpdateLoading();
+                RenderLoading();
+                break;
+
+            case AppState::InGame:
+                Update();
+                Render();
+                break;
+
+            case AppState::Paused:
+                UpdatePaused();
+                RenderPaused();
+                break;
+            }
         }
 
         // Wait for GPU to finish before cleanup
         m_commandQueue->Flush();
+    }
+
+    void UpdateMenu()
+    {
+        float deltaTime = m_timer.GetDeltaTime();
+
+        // Get mouse input
+        auto& input = Input::Get();
+        float mouseX = static_cast<float>(input.GetMouseX());
+        float mouseY = static_cast<float>(input.GetMouseY());
+        bool mouseClicked = input.IsMouseButtonPressed(MouseButton::Left);
+
+        // Update main menu
+        m_mainMenu->HandleInput(mouseX, mouseY, mouseClicked);
+        m_mainMenu->Update(deltaTime);
+
+        // Check for menu actions
+        MenuAction action = m_mainMenu->GetLastAction();
+        m_mainMenu->ClearAction();
+
+        switch (action)
+        {
+        case MenuAction::Play:
+            m_currentState = AppState::Loading;
+            break;
+
+        case MenuAction::Settings:
+            // TODO: Show settings menu
+            break;
+
+        case MenuAction::Exit:
+            PostQuitMessage(0);
+            break;
+
+        default:
+            break;
+        }
+    }
+
+    void RenderMenu()
+    {
+        uint32_t backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
+
+        // Begin D2D rendering
+        m_d2dInterop->BeginD2DDraw(backBufferIndex);
+
+        // Clear with dark background
+        m_d2dInterop->Clear(0.02f, 0.02f, 0.05f, 1.0f);
+
+        // Render main menu
+        m_mainMenu->Render(m_d2dInterop.get());
+
+        // End D2D rendering
+        m_d2dInterop->EndD2DDraw();
+
+        // Present
+        m_swapChain->Present(m_vsyncEnabled);
+    }
+
+    void UpdateLoading()
+    {
+        // Load game resources (synchronous for now)
+        if (InitializeGameResources())
+        {
+            m_currentState = AppState::InGame;
+            m_window.SetMouseCaptureEnabled(true);  // Enable mouse capture for FPS controls
+
+            // Release mouse capture initially (user clicks to capture)
+            Input::Get().SetMouseCaptured(false);
+        }
+        else
+        {
+            // Failed to load, return to menu
+            MessageBox(m_window.GetHandle(), L"Failed to load game resources", L"Error", MB_OK);
+            m_currentState = AppState::MainMenu;
+            m_window.SetMouseCaptureEnabled(false);  // Back to menu mode
+        }
+    }
+
+    void RenderLoading()
+    {
+        uint32_t backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
+
+        // Begin D2D rendering
+        m_d2dInterop->BeginD2DDraw(backBufferIndex);
+
+        // Clear with dark background
+        m_d2dInterop->Clear(0.02f, 0.02f, 0.05f, 1.0f);
+
+        // Draw loading text
+        m_d2dInterop->SetBrushColor(1.0f, 1.0f, 1.0f, 1.0f);
+
+        // Use main menu's text format (or create a simple one)
+        ID2D1DeviceContext* ctx = m_d2dInterop->GetD2DContext();
+        D2D1_RECT_F rect = D2D1::RectF(
+            0.0f,
+            static_cast<float>(m_window.GetHeight()) / 2.0f - 30.0f,
+            static_cast<float>(m_window.GetWidth()),
+            static_cast<float>(m_window.GetHeight()) / 2.0f + 30.0f
+        );
+
+        // Just clear and show loading will happen fast
+        // In a real game, you'd show a progress bar here
+
+        // End D2D rendering
+        m_d2dInterop->EndD2DDraw();
+
+        // Present
+        m_swapChain->Present(m_vsyncEnabled);
+    }
+
+    void UpdatePaused()
+    {
+        float deltaTime = m_timer.GetDeltaTime();
+
+        // Check for ESC to resume
+        if (Input::Get().IsKeyPressed(Key::Escape))
+        {
+            m_currentState = AppState::InGame;
+            return;
+        }
+
+        // Get mouse input
+        auto& input = Input::Get();
+        float mouseX = static_cast<float>(input.GetMouseX());
+        float mouseY = static_cast<float>(input.GetMouseY());
+        bool mouseClicked = input.IsMouseButtonPressed(MouseButton::Left);
+
+        // Update pause menu
+        m_pauseMenu->HandleInput(mouseX, mouseY, mouseClicked);
+        m_pauseMenu->Update(deltaTime);
+
+        // Check for pause menu actions
+        PauseAction action = m_pauseMenu->GetLastAction();
+        m_pauseMenu->ClearAction();
+
+        switch (action)
+        {
+        case PauseAction::Resume:
+            m_currentState = AppState::InGame;
+            m_window.SetMouseCaptureEnabled(true);  // Re-enable mouse capture
+            break;
+
+        case PauseAction::MainMenu:
+            m_currentState = AppState::MainMenu;
+            m_window.SetMouseCaptureEnabled(false);  // Disable mouse capture in menu
+            // Optionally unload game resources here
+            break;
+
+        case PauseAction::Exit:
+            PostQuitMessage(0);
+            break;
+
+        default:
+            break;
+        }
+    }
+
+    void RenderPaused()
+    {
+        // First render the game scene (frozen)
+        Render();
+
+        // Then overlay the pause menu using D2D
+        uint32_t backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
+
+        // Begin D2D rendering (this will overlay on top of the rendered scene)
+        m_d2dInterop->BeginD2DDraw(backBufferIndex);
+
+        // Render pause menu (includes semi-transparent overlay)
+        m_pauseMenu->Render(m_d2dInterop.get());
+
+        // End D2D rendering
+        m_d2dInterop->EndD2DDraw();
+
+        // Present again with the overlay
+        m_swapChain->Present(m_vsyncEnabled);
     }
 
     void OnMenuCommand(MenuCommand cmd)
@@ -768,6 +1046,17 @@ public:
     void Update()
     {
         float deltaTime = m_timer.GetDeltaTime();
+
+        // Check for ESC to pause (only when mouse is not captured, otherwise ESC releases mouse)
+        if (Input::Get().IsKeyPressed(Key::Escape))
+        {
+            if (!Input::Get().IsMouseCaptured())
+            {
+                m_currentState = AppState::Paused;
+                m_window.SetMouseCaptureEnabled(false);  // Disable mouse capture in pause menu
+                return;
+            }
+        }
 
         // Process camera FPS controls
         m_camera->ProcessFPSInput(deltaTime, 5.0f, 0.003f);
@@ -899,6 +1188,13 @@ public:
             m_commandQueue->Flush();
         }
 
+        // Menu UI
+        m_pauseMenu.reset();
+        m_mainMenu.reset();
+
+        // D2D interop (must be before swap chain is destroyed)
+        m_d2dInterop.reset();
+
         // Render graph (owns passes, must be destroyed first)
         m_renderGraph.reset();
         m_shadowPass = nullptr;
@@ -960,6 +1256,17 @@ private:
     std::unique_ptr<CommandQueue> m_commandQueue;
     std::unique_ptr<SwapChain> m_swapChain;
     std::unique_ptr<CommandList> m_commandList;
+
+    // Application state
+    AppState m_currentState = AppState::MainMenu;
+    bool m_gameResourcesLoaded = false;
+
+    // D2D/DirectWrite interop for menu rendering
+    std::unique_ptr<D2DInterop> m_d2dInterop;
+
+    // Menu UI
+    std::unique_ptr<MainMenu> m_mainMenu;
+    std::unique_ptr<PauseMenu> m_pauseMenu;
 
     // Camera
     std::unique_ptr<Camera> m_camera;

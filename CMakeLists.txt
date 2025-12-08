@@ -15,6 +15,7 @@ add_executable(dx_engine
     src/Core/ResourceManager.cpp
     src/Core/Log.h
     src/Core/Log.cpp
+    src/Core/AppState.h
 
     # RHI (Render Hardware Interface)
     src/RHI/Device.h
@@ -43,6 +44,17 @@ add_executable(dx_engine
     src/RHI/PipelineState.cpp
     src/RHI/CubemapTexture.h
     src/RHI/CubemapTexture.cpp
+    src/RHI/D2DInterop.h
+    src/RHI/D2DInterop.cpp
+
+    # UI
+    src/UI/UIElement.h
+    src/UI/UIButton.h
+    src/UI/UIButton.cpp
+    src/UI/MainMenu.h
+    src/UI/MainMenu.cpp
+    src/UI/PauseMenu.h
+    src/UI/PauseMenu.cpp
 
     # Renderer
     src/Renderer/Camera.h
@@ -126,11 +138,14 @@ target_compile_definitions(dx_engine PRIVATE UNICODE _UNICODE)
 # Include directories
 target_include_directories(dx_engine PRIVATE ${Stb_INCLUDE_DIR})
 
-# Link DirectX 12 libraries
+# Link DirectX 12 and D2D libraries
 target_link_libraries(dx_engine
     d3d12.lib
     dxgi.lib
     d3dcompiler.lib
+    d3d11.lib
+    d2d1.lib
+    dwrite.lib
 )
 
 # Set subsystem to Windows

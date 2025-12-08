@@ -279,8 +279,8 @@ LRESULT CALLBACK Window::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM 
             return 0;
 
         case WM_LBUTTONDOWN:
-            // Capture mouse on left click (for FPS controls)
-            if (!Input::Get().IsMouseCaptured())
+            // Capture mouse on left click (for FPS controls) - only when enabled
+            if (window->m_mouseCaptureEnabled && !Input::Get().IsMouseCaptured())
             {
                 Input::Get().SetMouseCaptured(true);
             }

@@ -15,18 +15,35 @@ void PostProcessPass::Setup(RenderGraph& graph)
 
 void PostProcessPass::Execute(CommandList* commandList, DescriptorHeap* srvHeap)
 {
-    if (!m_postProcess || !m_swapChain || !m_enabled)
+    if (!m_postProcess || !m_enabled)
         return;
 
-    // Get current back buffer RTV
-    D3D12_CPU_DESCRIPTOR_HANDLE outputRTV = m_swapChain->GetRTV(m_swapChain->GetCurrentBackBufferIndex());
+    D3D12_CPU_DESCRIPTOR_HANDLE outputRTV;
+    uint32_t width, height;
 
-    // Render post-processing to swap chain back buffer
+    if (m_useCustomOutput)
+    {
+        // Render to custom output (scene viewport texture)
+        outputRTV = m_customOutputRTV;
+        width = m_customWidth;
+        height = m_customHeight;
+    }
+    else
+    {
+        // Render to swap chain back buffer (fallback)
+        if (!m_swapChain)
+            return;
+        outputRTV = m_swapChain->GetRTV(m_swapChain->GetCurrentBackBufferIndex());
+        width = m_swapChain->GetWidth();
+        height = m_swapChain->GetHeight();
+    }
+
+    // Render post-processing
     m_postProcess->Render(
         commandList->GetD3D12CommandList(),
         srvHeap,
         outputRTV,
-        m_swapChain->GetWidth(),
-        m_swapChain->GetHeight()
+        width,
+        height
     );
 }

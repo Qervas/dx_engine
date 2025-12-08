@@ -1,12 +1,8 @@
 #include "Window.h"
 #include "Input.h"
-#include <imgui.h>
 #include <shellscalingapi.h>
 
 #pragma comment(lib, "Shcore.lib")
-
-// Forward declare ImGui Win32 handler
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 Window::Window(const std::wstring& title, uint32_t width, uint32_t height)
     : m_title(title)
@@ -41,9 +37,9 @@ bool Window::Initialize()
         return false;
     }
 
-    // Calculate window size to get desired client area
+    // Calculate window size to get desired client area (with menu)
     RECT windowRect = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
-    AdjustWindowRectEx(&windowRect, WS_OVERLAPPEDWINDOW, FALSE, 0);
+    AdjustWindowRectEx(&windowRect, WS_OVERLAPPEDWINDOW, TRUE, 0);  // TRUE for menu
     int windowWidth = windowRect.right - windowRect.left;
     int windowHeight = windowRect.bottom - windowRect.top;
 
@@ -67,6 +63,9 @@ bool Window::Initialize()
         return false;
     }
 
+    // Create and set menu bar
+    CreateMenuBar();
+
     // Get actual client area size (in case of DPI scaling)
     RECT clientRect;
     GetClientRect(m_hwnd, &clientRect);
@@ -83,8 +82,87 @@ bool Window::Initialize()
     return true;
 }
 
+void Window::CreateMenuBar()
+{
+    m_menuBar = ::CreateMenu();
+
+    // File menu
+    HMENU fileMenu = CreatePopupMenu();
+    AppendMenu(fileMenu, MF_STRING, static_cast<UINT>(MenuCommand::FileExit), L"E&xit\tAlt+F4");
+    AppendMenu(m_menuBar, MF_POPUP, (UINT_PTR)fileMenu, L"&File");
+
+    // View menu
+    HMENU viewMenu = CreatePopupMenu();
+    AppendMenu(viewMenu, MF_STRING, static_cast<UINT>(MenuCommand::ViewWireframe), L"&Wireframe\tF1");
+    AppendMenu(viewMenu, MF_STRING | MF_CHECKED, static_cast<UINT>(MenuCommand::ViewDebugRendering), L"&Debug Rendering\tF2");
+    AppendMenu(viewMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenu(viewMenu, MF_STRING, static_cast<UINT>(MenuCommand::ViewFullscreen), L"&Fullscreen\tF11");
+    AppendMenu(m_menuBar, MF_POPUP, (UINT_PTR)viewMenu, L"&View");
+
+    // Settings menu
+    HMENU settingsMenu = CreatePopupMenu();
+    AppendMenu(settingsMenu, MF_STRING | MF_CHECKED, static_cast<UINT>(MenuCommand::SettingsPostProcess), L"&Post-Processing\tF3");
+    AppendMenu(settingsMenu, MF_STRING | MF_CHECKED, static_cast<UINT>(MenuCommand::SettingsBloom), L"&Bloom\tF4");
+    AppendMenu(settingsMenu, MF_STRING | MF_CHECKED, static_cast<UINT>(MenuCommand::SettingsSSAO), L"&SSAO\tF5");
+    AppendMenu(settingsMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenu(settingsMenu, MF_STRING | MF_CHECKED, static_cast<UINT>(MenuCommand::SettingsVSync), L"&VSync\tF6");
+    AppendMenu(m_menuBar, MF_POPUP, (UINT_PTR)settingsMenu, L"&Settings");
+
+    SetMenu(m_hwnd, m_menuBar);
+}
+
+void Window::SetMenuChecked(MenuCommand cmd, bool checked)
+{
+    if (m_menuBar)
+    {
+        CheckMenuItem(m_menuBar, static_cast<UINT>(cmd),
+            MF_BYCOMMAND | (checked ? MF_CHECKED : MF_UNCHECKED));
+    }
+}
+
+bool Window::IsMenuChecked(MenuCommand cmd) const
+{
+    if (m_menuBar)
+    {
+        UINT state = GetMenuState(m_menuBar, static_cast<UINT>(cmd), MF_BYCOMMAND);
+        return (state & MF_CHECKED) != 0;
+    }
+    return false;
+}
+
+void Window::OnMenuCommand(UINT commandId)
+{
+    // Toggle checkable menu items
+    MenuCommand cmd = static_cast<MenuCommand>(commandId);
+    switch (cmd)
+    {
+    case MenuCommand::ViewWireframe:
+    case MenuCommand::ViewDebugRendering:
+    case MenuCommand::SettingsPostProcess:
+    case MenuCommand::SettingsBloom:
+    case MenuCommand::SettingsSSAO:
+    case MenuCommand::SettingsVSync:
+        SetMenuChecked(cmd, !IsMenuChecked(cmd));
+        break;
+    default:
+        break;
+    }
+
+    // Notify callback
+    if (m_menuCallback)
+    {
+        m_menuCallback(cmd);
+    }
+}
+
 void Window::Shutdown()
 {
+    if (m_menuBar)
+    {
+        DestroyMenu(m_menuBar);
+        m_menuBar = nullptr;
+    }
+
     if (m_hwnd)
     {
         DestroyWindow(m_hwnd);
@@ -114,10 +192,6 @@ bool Window::ProcessMessages()
 
 LRESULT CALLBACK Window::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-    // Forward to ImGui first
-    if (ImGui_ImplWin32_WndProcHandler(hwnd, uMsg, wParam, lParam))
-        return true;
-
     Window* window = nullptr;
 
     if (uMsg == WM_NCCREATE)
@@ -143,28 +217,70 @@ LRESULT CALLBACK Window::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM 
             PostQuitMessage(0);
             return 0;
 
-        case WM_KEYDOWN:
-            if (wParam == VK_ESCAPE)
+        case WM_COMMAND:
+            // Menu command
+            if (HIWORD(wParam) == 0)  // Menu item
             {
-                // Toggle mouse capture with Escape
-                Input& input = Input::Get();
-                if (input.IsMouseCaptured())
+                UINT commandId = LOWORD(wParam);
+                if (commandId == static_cast<UINT>(MenuCommand::FileExit))
                 {
-                    input.SetMouseCaptured(false);
-                }
-                else
-                {
-                    // If not captured, close the window
                     window->m_shouldClose = true;
                     PostQuitMessage(0);
                 }
+                else
+                {
+                    window->OnMenuCommand(commandId);
+                }
+            }
+            return 0;
+
+        case WM_KEYDOWN:
+            // Handle keyboard shortcuts
+            switch (wParam)
+            {
+            case VK_ESCAPE:
+                {
+                    // Toggle mouse capture with Escape
+                    Input& input = Input::Get();
+                    if (input.IsMouseCaptured())
+                    {
+                        input.SetMouseCaptured(false);
+                    }
+                    else
+                    {
+                        // If not captured, close the window
+                        window->m_shouldClose = true;
+                        PostQuitMessage(0);
+                    }
+                }
+                break;
+            case VK_F1:
+                window->OnMenuCommand(static_cast<UINT>(MenuCommand::ViewWireframe));
+                break;
+            case VK_F2:
+                window->OnMenuCommand(static_cast<UINT>(MenuCommand::ViewDebugRendering));
+                break;
+            case VK_F3:
+                window->OnMenuCommand(static_cast<UINT>(MenuCommand::SettingsPostProcess));
+                break;
+            case VK_F4:
+                window->OnMenuCommand(static_cast<UINT>(MenuCommand::SettingsBloom));
+                break;
+            case VK_F5:
+                window->OnMenuCommand(static_cast<UINT>(MenuCommand::SettingsSSAO));
+                break;
+            case VK_F6:
+                window->OnMenuCommand(static_cast<UINT>(MenuCommand::SettingsVSync));
+                break;
+            case VK_F11:
+                window->OnMenuCommand(static_cast<UINT>(MenuCommand::ViewFullscreen));
+                break;
             }
             return 0;
 
         case WM_LBUTTONDOWN:
             // Capture mouse on left click (for FPS controls)
-            // But only if ImGui doesn't want the mouse
-            if (!Input::Get().IsMouseCaptured() && !ImGui::GetIO().WantCaptureMouse)
+            if (!Input::Get().IsMouseCaptured())
             {
                 Input::Get().SetMouseCaptured(true);
             }

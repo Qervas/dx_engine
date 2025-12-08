@@ -37,8 +37,7 @@
 #include "Renderer/GBuffer.h"
 #include "Renderer/SSAO.h"
 #include "RHI/CubemapTexture.h"
-#include "UI/ImGuiRenderer.h"
-#include <imgui.h>
+#include "Core/Log.h"
 #include <memory>
 #include <DirectXMath.h>
 
@@ -71,6 +70,11 @@ public:
         {
             return false;
         }
+
+        // Set up menu callback
+        m_window.SetMenuCallback([this](MenuCommand cmd) {
+            OnMenuCommand(cmd);
+        });
 
         // Initialize graphics device
         m_device = std::make_unique<GraphicsDevice>();
@@ -127,13 +131,6 @@ public:
             return false;
         }
         m_debugRenderer->SetCamera(m_camera.get());
-
-        // Initialize ImGui
-        m_imguiRenderer = std::make_unique<ImGuiRenderer>(m_device.get());
-        if (!m_imguiRenderer->Initialize(&m_window, m_srvHeap.get(), 2))
-        {
-            return false;
-        }
 
         // Initialize skybox
         if (!InitializeSkybox())
@@ -221,6 +218,8 @@ public:
             );
         }
 
+        // PostProcessPass and DebugPass render directly to swap chain (no scene viewport)
+
         // Compile the graph
         m_renderGraph->Compile();
 
@@ -294,7 +293,7 @@ public:
     bool InitializeRenderingResources()
     {
         // Create descriptor heap for SRVs
-        m_srvHeap = std::make_unique<DescriptorHeap>(m_device.get(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 100, true);
+        m_srvHeap = std::make_unique<DescriptorHeap>(m_device.get(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 512, true);
         if (!m_srvHeap->Initialize())
         {
             return false;
@@ -596,7 +595,7 @@ public:
     bool InitializeSSAO()
     {
         // Create RTV heap for G-Buffer and PostProcess render targets
-        m_rtvHeap = std::make_unique<DescriptorHeap>(m_device.get(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 32, false);
+        m_rtvHeap = std::make_unique<DescriptorHeap>(m_device.get(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 64, false);
         if (!m_rtvHeap->Initialize())
         {
             return false;
@@ -705,156 +704,118 @@ public:
         m_commandQueue->Flush();
     }
 
+    void OnMenuCommand(MenuCommand cmd)
+    {
+        switch (cmd)
+        {
+        case MenuCommand::ViewWireframe:
+            m_wireframeEnabled = m_window.IsMenuChecked(cmd);
+            break;
+
+        case MenuCommand::ViewDebugRendering:
+            m_debugRenderingEnabled = m_window.IsMenuChecked(cmd);
+            if (m_debugPass)
+            {
+                m_debugPass->SetEnabled(m_debugRenderingEnabled);
+            }
+            break;
+
+        case MenuCommand::SettingsPostProcess:
+            m_postProcessEnabled = m_window.IsMenuChecked(cmd);
+            if (m_postProcessPass)
+            {
+                m_postProcessPass->SetEnabled(m_postProcessEnabled);
+            }
+            // Update render targets based on post-process state
+            if (m_postProcessEnabled)
+            {
+                m_mainPass->SetCustomRTV(m_postProcess->GetHDRRTV(), m_window.GetWidth(), m_window.GetHeight());
+                m_skyboxPass->SetCustomRTV(m_postProcess->GetHDRRTV(), m_window.GetWidth(), m_window.GetHeight());
+            }
+            else
+            {
+                m_mainPass->ClearCustomRTV();
+                m_skyboxPass->ClearCustomRTV();
+            }
+            break;
+
+        case MenuCommand::SettingsBloom:
+            m_bloomEnabled = m_window.IsMenuChecked(cmd);
+            if (m_postProcess)
+            {
+                m_postProcess->SetBloomEnabled(m_bloomEnabled);
+            }
+            break;
+
+        case MenuCommand::SettingsSSAO:
+            m_ssaoEnabled = m_window.IsMenuChecked(cmd);
+            if (m_ssaoPass)
+            {
+                m_ssaoPass->SetEnabled(m_ssaoEnabled);
+            }
+            break;
+
+        case MenuCommand::SettingsVSync:
+            m_vsyncEnabled = m_window.IsMenuChecked(cmd);
+            break;
+
+        case MenuCommand::ViewFullscreen:
+            // TODO: Implement fullscreen toggle
+            break;
+        }
+    }
+
     void Update()
     {
         float deltaTime = m_timer.GetDeltaTime();
 
-        // Begin ImGui frame
-        m_imguiRenderer->BeginFrame();
-
-        // Show ImGui demo window for testing
-        ImGui::ShowDemoWindow();
-
-        // Simple stats window
-        ImGui::Begin("Stats");
-        ImGui::Text("FPS: %.1f", m_timer.GetFPS());
-        ImGui::Text("Frame Time: %.3f ms", deltaTime * 1000.0f);
-        ImGui::End();
-
-        // Post-Processing controls
-        if (m_postProcess)
-        {
-            ImGui::Begin("Post-Processing");
-
-            // Master enable/disable toggle
-            if (ImGui::Checkbox("Enable Post-Processing", &m_postProcessEnabled))
-            {
-                // Update render targets and pass state when toggling
-                m_postProcessPass->SetEnabled(m_postProcessEnabled);
-
-                if (m_postProcessEnabled)
-                {
-                    m_mainPass->SetCustomRTV(
-                        m_postProcess->GetHDRRTV(),
-                        m_window.GetWidth(),
-                        m_window.GetHeight()
-                    );
-                    m_skyboxPass->SetCustomRTV(
-                        m_postProcess->GetHDRRTV(),
-                        m_window.GetWidth(),
-                        m_window.GetHeight()
-                    );
-                }
-                else
-                {
-                    m_mainPass->ClearCustomRTV();
-                    m_skyboxPass->ClearCustomRTV();
-                }
-            }
-
-            if (m_postProcessEnabled)
-            {
-                ImGui::Separator();
-
-                // Exposure
-                float exposure = m_postProcess->GetExposure();
-                if (ImGui::SliderFloat("Exposure", &exposure, 0.1f, 5.0f))
-                {
-                    m_postProcess->SetExposure(exposure);
-                }
-
-                // Gamma
-                float gamma = m_postProcess->GetGamma();
-                if (ImGui::SliderFloat("Gamma", &gamma, 1.0f, 3.0f))
-                {
-                    m_postProcess->SetGamma(gamma);
-                }
-
-                // Tone mapping mode
-                const char* toneMapModes[] = { "None", "Reinhard", "ACES", "Uncharted 2" };
-                int currentMode = static_cast<int>(m_postProcess->GetToneMapMode());
-                if (ImGui::Combo("Tone Mapping", &currentMode, toneMapModes, IM_ARRAYSIZE(toneMapModes)))
-                {
-                    m_postProcess->SetToneMapMode(static_cast<ToneMapMode>(currentMode));
-                }
-
-                ImGui::Separator();
-
-                // Bloom settings
-                bool bloomEnabled = m_postProcess->IsBloomEnabled();
-                if (ImGui::Checkbox("Bloom", &bloomEnabled))
-                {
-                    m_postProcess->SetBloomEnabled(bloomEnabled);
-                }
-
-                if (bloomEnabled)
-                {
-                    float bloomIntensity = m_postProcess->GetBloomIntensity();
-                    if (ImGui::SliderFloat("Bloom Intensity", &bloomIntensity, 0.0f, 2.0f))
-                    {
-                        m_postProcess->SetBloomIntensity(bloomIntensity);
-                    }
-
-                    float bloomThreshold = m_postProcess->GetBloomThreshold();
-                    if (ImGui::SliderFloat("Bloom Threshold", &bloomThreshold, 0.0f, 5.0f))
-                    {
-                        m_postProcess->SetBloomThreshold(bloomThreshold);
-                    }
-                }
-            }
-
-            ImGui::End();
-        }
-
-        // Process camera FPS controls (only if ImGui doesn't want input)
-        if (!m_imguiRenderer->WantCaptureMouse())
-        {
-            m_camera->ProcessFPSInput(deltaTime, 5.0f, 0.003f);
-        }
-
-        // Scene is static - no rotation
+        // Process camera FPS controls
+        m_camera->ProcessFPSInput(deltaTime, 5.0f, 0.003f);
 
         // Update scene (propagates transform hierarchy)
         m_sceneRenderer->Update(deltaTime);
 
         // === Debug Rendering ===
-        // Clear previous frame's debug primitives
-        m_debugRenderer->Clear();
-
-        // Draw world axes at origin
-        m_debugRenderer->DrawAxes(XMFLOAT3(0.0f, 0.0f, 0.0f), 2.0f);
-
-        // Draw a grid on the ground plane
-        m_debugRenderer->DrawGrid(20.0f, 1.0f, XMFLOAT4(0.3f, 0.3f, 0.3f, 1.0f));
-
-        // Draw bounding boxes around cubes (skip ground at y=-2)
-        const auto& entities = m_scene->GetEntitiesWithComponent<Transform>();
-        for (Entity entity : entities)
+        if (m_debugRenderingEnabled)
         {
-            Transform* transform = m_scene->GetComponent<Transform>(entity);
-            if (transform)
+            // Clear previous frame's debug primitives
+            m_debugRenderer->Clear();
+
+            // Draw world axes at origin
+            m_debugRenderer->DrawAxes(XMFLOAT3(0.0f, 0.0f, 0.0f), 2.0f);
+
+            // Draw a grid on the ground plane
+            m_debugRenderer->DrawGrid(20.0f, 1.0f, XMFLOAT4(0.3f, 0.3f, 0.3f, 1.0f));
+
+            // Draw bounding boxes around cubes (skip ground at y=-2)
+            const auto& entities = m_scene->GetEntitiesWithComponent<Transform>();
+            for (Entity entity : entities)
             {
-                XMFLOAT3 pos = transform->GetWorldPosition();
-                // Skip ground (positioned at y=-2)
-                if (pos.y < -1.0f)
-                    continue;
+                Transform* transform = m_scene->GetComponent<Transform>(entity);
+                if (transform)
+                {
+                    XMFLOAT3 pos = transform->GetWorldPosition();
+                    // Skip ground (positioned at y=-2)
+                    if (pos.y < -1.0f)
+                        continue;
 
-                m_debugRenderer->DrawWireBox(
-                    XMFLOAT3(pos.x - 0.5f, pos.y - 0.5f, pos.z - 0.5f),
-                    XMFLOAT3(pos.x + 0.5f, pos.y + 0.5f, pos.z + 0.5f),
-                    XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f)
-                );
+                    m_debugRenderer->DrawWireBox(
+                        XMFLOAT3(pos.x - 0.5f, pos.y - 0.5f, pos.z - 0.5f),
+                        XMFLOAT3(pos.x + 0.5f, pos.y + 0.5f, pos.z + 0.5f),
+                        XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f)
+                    );
+                }
             }
-        }
 
-        // Draw light direction indicator
-        XMFLOAT3 lightDir = m_lights[0].GetDirection();
-        m_debugRenderer->DrawArrow(
-            XMFLOAT3(0.0f, 5.0f, 0.0f),
-            XMFLOAT3(-lightDir.x * 3.0f, 5.0f - lightDir.y * 3.0f, -lightDir.z * 3.0f),
-            XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f),
-            0.2f
-        );
+            // Draw light direction indicator
+            XMFLOAT3 lightDir = m_lights[0].GetDirection();
+            m_debugRenderer->DrawArrow(
+                XMFLOAT3(0.0f, 5.0f, 0.0f),
+                XMFLOAT3(-lightDir.x * 3.0f, 5.0f - lightDir.y * 3.0f, -lightDir.z * 3.0f),
+                XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f),
+                0.2f
+            );
+        }
 
         // Update window title with FPS
         static float fpsUpdateTimer = 0.0f;
@@ -903,14 +864,11 @@ public:
             D3D12_RESOURCE_STATE_RENDER_TARGET
         );
 
-        // Execute render graph (shadow pass + main pass)
+        // Execute render graph (scene renders directly to swap chain)
         m_renderGraph->Execute(m_commandList.get(), m_srvHeap.get());
 
         // End frame for render graph
         m_renderGraph->EndFrame();
-
-        // Render ImGui (after scene, before present)
-        m_imguiRenderer->EndFrame(m_commandList.get());
 
         // Transition back buffer to present state
         m_commandList->TransitionBarrier(
@@ -926,8 +884,8 @@ public:
         ID3D12CommandList* commandLists[] = { m_commandList->GetD3D12CommandList() };
         m_commandQueue->ExecuteCommandLists(commandLists, 1);
 
-        // Present
-        m_swapChain->Present(true);
+        // Present (with vsync based on settings)
+        m_swapChain->Present(m_vsyncEnabled);
 
         // Wait for this frame to complete
         m_commandQueue->Flush();
@@ -966,9 +924,6 @@ public:
 
         // Debug renderer
         m_debugRenderer.reset();
-
-        // ImGui
-        m_imguiRenderer.reset();
 
         // Scene resources
         m_sceneRenderer.reset();
@@ -1055,16 +1010,20 @@ private:
     // Post-Processing (HDR, Bloom, Tone Mapping)
     std::unique_ptr<PostProcess> m_postProcess;
     PostProcessPass* m_postProcessPass = nullptr;
-    bool m_postProcessEnabled = true;
 
     // Debug renderer
     std::unique_ptr<DebugRenderer> m_debugRenderer;
 
-    // ImGui
-    std::unique_ptr<ImGuiRenderer> m_imguiRenderer;
-
     // Scene lights
     std::vector<Light> m_lights;
+
+    // Render settings (controlled by Windows menu)
+    bool m_wireframeEnabled = false;
+    bool m_debugRenderingEnabled = true;
+    bool m_postProcessEnabled = true;
+    bool m_bloomEnabled = true;
+    bool m_ssaoEnabled = true;
+    bool m_vsyncEnabled = true;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)

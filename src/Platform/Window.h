@@ -5,6 +5,24 @@
 #include <string>
 #include <functional>
 
+// Menu command IDs
+enum class MenuCommand : UINT
+{
+    // File menu
+    FileExit = 1001,
+
+    // View menu
+    ViewWireframe = 2001,
+    ViewDebugRendering = 2002,
+    ViewFullscreen = 2003,
+
+    // Settings menu
+    SettingsPostProcess = 3001,
+    SettingsBloom = 3002,
+    SettingsSSAO = 3003,
+    SettingsVSync = 3004
+};
+
 class Window
 {
 public:
@@ -23,15 +41,24 @@ public:
     bool WasResized() const { return m_wasResized; }
     void ClearResizeFlag() { m_wasResized = false; }
 
-    // Resize callback
+    // Menu state
+    void SetMenuChecked(MenuCommand cmd, bool checked);
+    bool IsMenuChecked(MenuCommand cmd) const;
+
+    // Callbacks
     using ResizeCallback = std::function<void(uint32_t, uint32_t)>;
+    using MenuCallback = std::function<void(MenuCommand)>;
     void SetResizeCallback(ResizeCallback callback) { m_resizeCallback = callback; }
+    void SetMenuCallback(MenuCallback callback) { m_menuCallback = callback; }
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     void OnResize(uint32_t width, uint32_t height);
+    void CreateMenuBar();
+    void OnMenuCommand(UINT commandId);
 
     HWND m_hwnd = nullptr;
+    HMENU m_menuBar = nullptr;
     HINSTANCE m_hInstance = nullptr;
     std::wstring m_title;
     uint32_t m_width;
@@ -39,4 +66,5 @@ private:
     bool m_shouldClose = false;
     bool m_wasResized = false;
     ResizeCallback m_resizeCallback;
+    MenuCallback m_menuCallback;
 };

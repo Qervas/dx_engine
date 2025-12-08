@@ -279,3 +279,40 @@ void D2DInterop::FillRoundedRect(float x, float y, float width, float height, fl
     );
     m_d2dContext->FillRoundedRectangle(roundedRect, m_brush.Get());
 }
+
+void D2DInterop::DrawRect(float x, float y, float width, float height, float strokeWidth)
+{
+    D2D1_RECT_F rect = D2D1::RectF(x, y, x + width, y + height);
+    m_d2dContext->DrawRectangle(rect, m_brush.Get(), strokeWidth);
+}
+
+void D2DInterop::DrawRoundedRect(float x, float y, float width, float height, float radius, float strokeWidth)
+{
+    D2D1_ROUNDED_RECT roundedRect = D2D1::RoundedRect(
+        D2D1::RectF(x, y, x + width, y + height),
+        radius,
+        radius
+    );
+    m_d2dContext->DrawRoundedRectangle(roundedRect, m_brush.Get(), strokeWidth);
+}
+
+void D2DInterop::DrawLine(float x1, float y1, float x2, float y2, float strokeWidth)
+{
+    m_d2dContext->DrawLine(
+        D2D1::Point2F(x1, y1),
+        D2D1::Point2F(x2, y2),
+        m_brush.Get(),
+        strokeWidth
+    );
+}
+
+void D2DInterop::FillEllipse(float centerX, float centerY, float radiusX, float radiusY)
+{
+    D2D1_ELLIPSE ellipse = D2D1::Ellipse(D2D1::Point2F(centerX, centerY), radiusX, radiusY);
+    m_d2dContext->FillEllipse(ellipse, m_brush.Get());
+}
+
+void D2DInterop::FillCircle(float centerX, float centerY, float radius)
+{
+    FillEllipse(centerX, centerY, radius, radius);
+}

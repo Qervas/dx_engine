@@ -16,6 +16,8 @@ add_executable(dx_engine
     src/Core/Log.h
     src/Core/Log.cpp
     src/Core/AppState.h
+    src/Core/Application.h
+    src/Core/Application.cpp
 
     # RHI (Render Hardware Interface)
     src/RHI/Device.h
@@ -51,10 +53,24 @@ add_executable(dx_engine
     src/UI/UIElement.h
     src/UI/UIButton.h
     src/UI/UIButton.cpp
+    src/UI/UILabel.h
+    src/UI/UILabel.cpp
+    src/UI/UICheckbox.h
+    src/UI/UICheckbox.cpp
+    src/UI/UISlider.h
+    src/UI/UISlider.cpp
+    src/UI/UIDropdown.h
+    src/UI/UIDropdown.cpp
     src/UI/MainMenu.h
     src/UI/MainMenu.cpp
     src/UI/PauseMenu.h
     src/UI/PauseMenu.cpp
+    src/UI/SettingsMenu.h
+    src/UI/SettingsMenu.cpp
+    src/UI/QuickSettings.h
+    src/UI/QuickSettings.cpp
+    src/UI/UIManager.h
+    src/UI/UIManager.cpp
 
     # Renderer
     src/Renderer/Camera.h

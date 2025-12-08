@@ -49,6 +49,21 @@ public:
     // Draw rounded rectangle
     void FillRoundedRect(float x, float y, float width, float height, float radius);
 
+    // Draw rectangle outline
+    void DrawRect(float x, float y, float width, float height, float strokeWidth = 1.0f);
+
+    // Draw rounded rectangle outline
+    void DrawRoundedRect(float x, float y, float width, float height, float radius, float strokeWidth = 1.0f);
+
+    // Draw line
+    void DrawLine(float x1, float y1, float x2, float y2, float strokeWidth = 1.0f);
+
+    // Draw ellipse (filled)
+    void FillEllipse(float centerX, float centerY, float radiusX, float radiusY);
+
+    // Draw circle (filled) - convenience wrapper
+    void FillCircle(float centerX, float centerY, float radius);
+
 private:
     GraphicsDevice* m_device;
     CommandQueue* m_commandQueue;

@@ -38,6 +38,9 @@ bool Application::Initialize()
     // Load config first
     LoadConfig();
 
+    // Apply initial window size from config BEFORE window creation
+    ApplyInitialDisplaySettings();
+
     if (!InitializeMinimal())
     {
         return false;
@@ -101,6 +104,23 @@ bool Application::InitializeMinimal()
         return false;
     }
     SetupUICallbacks();
+
+    // Create loading screen text format
+    IDWriteFactory* dwrite = m_d2dInterop->GetDWriteFactory();
+    HRESULT hr = dwrite->CreateTextFormat(
+        L"Segoe UI",
+        nullptr,
+        DWRITE_FONT_WEIGHT_LIGHT,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        36.0f,
+        L"en-us",
+        &m_loadingTextFormat
+    );
+    if (FAILED(hr)) return false;
+
+    m_loadingTextFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    m_loadingTextFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
     return true;
 }
@@ -475,8 +495,10 @@ void Application::SetupUICallbacks()
 {
     UISettingsCallbacks callbacks;
 
-    callbacks.onPostProcessChanged = [this](bool enabled) {
-        m_postProcessEnabled = enabled;
+    // Graphics callbacks - update Config (single source of truth) and apply to systems
+    callbacks.graphics.onPostProcessChanged = [this](bool enabled) {
+        Config::Get().Graphics().postProcessEnabled = enabled;
+        Config::Get().MarkDirty();
         if (m_postProcessPass) m_postProcessPass->SetEnabled(enabled);
         m_window.SetMenuChecked(MenuCommand::SettingsPostProcess, enabled);
         if (enabled && m_postProcess) {
@@ -488,58 +510,94 @@ void Application::SetupUICallbacks()
         }
     };
 
-    callbacks.onBloomChanged = [this](bool enabled) {
-        m_bloomEnabled = enabled;
+    callbacks.graphics.onBloomChanged = [this](bool enabled) {
+        Config::Get().Graphics().bloomEnabled = enabled;
+        Config::Get().MarkDirty();
         if (m_postProcess) m_postProcess->SetBloomEnabled(enabled);
         m_window.SetMenuChecked(MenuCommand::SettingsBloom, enabled);
     };
 
-    callbacks.onBloomIntensity = [this](float value) {
+    callbacks.graphics.onBloomIntensityChanged = [this](float value) {
+        Config::Get().Graphics().bloomIntensity = value;
+        Config::Get().MarkDirty();
         if (m_postProcess) m_postProcess->SetBloomIntensity(value);
     };
 
-    callbacks.onBloomThreshold = [this](float value) {
+    callbacks.graphics.onBloomThresholdChanged = [this](float value) {
+        Config::Get().Graphics().bloomThreshold = value;
+        Config::Get().MarkDirty();
         if (m_postProcess) m_postProcess->SetBloomThreshold(value);
     };
 
-    callbacks.onToneMapping = [this](int mode) {
+    callbacks.graphics.onToneMappingChanged = [this](int mode) {
+        Config::Get().Graphics().toneMappingMode = mode;
+        Config::Get().MarkDirty();
         if (m_postProcess) m_postProcess->SetToneMapMode(static_cast<ToneMapMode>(mode));
     };
 
-    callbacks.onExposure = [this](float value) {
+    callbacks.graphics.onExposureChanged = [this](float value) {
+        Config::Get().Graphics().exposure = value;
+        Config::Get().MarkDirty();
         if (m_postProcess) m_postProcess->SetExposure(value);
     };
 
-    callbacks.onGamma = [this](float value) {
+    callbacks.graphics.onGammaChanged = [this](float value) {
+        Config::Get().Graphics().gamma = value;
+        Config::Get().MarkDirty();
         if (m_postProcess) m_postProcess->SetGamma(value);
     };
 
-    callbacks.onSSAOChanged = [this](bool enabled) {
-        m_ssaoEnabled = enabled;
+    callbacks.graphics.onSSAOChanged = [this](bool enabled) {
+        Config::Get().Graphics().ssaoEnabled = enabled;
+        Config::Get().MarkDirty();
         if (m_ssaoPass) m_ssaoPass->SetEnabled(enabled);
         m_window.SetMenuChecked(MenuCommand::SettingsSSAO, enabled);
     };
 
-    callbacks.onSSAORadius = [this](float value) {
+    callbacks.graphics.onSSAORadiusChanged = [this](float value) {
+        Config::Get().Graphics().ssaoRadius = value;
+        Config::Get().MarkDirty();
         if (m_ssao) m_ssao->SetRadius(value);
     };
 
-    callbacks.onSSAOIntensity = [this](float value) {
+    callbacks.graphics.onSSAOIntensityChanged = [this](float value) {
+        Config::Get().Graphics().ssaoIntensity = value;
+        Config::Get().MarkDirty();
         if (m_ssao) m_ssao->SetIntensity(value);
     };
 
-    callbacks.onVSync = [this](bool enabled) {
-        m_vsyncEnabled = enabled;
+    // Display callbacks
+    callbacks.display.onDisplayModeChanged = [this](int mode) {
+        Config::Get().Display().displayMode = mode;
+        Config::Get().MarkDirty();
+        m_window.SetDisplayMode(static_cast<WindowDisplayMode>(mode));
+    };
+
+    callbacks.display.onResolutionChanged = [this](int index) {
+        Config::Get().Display().resolutionIndex = index;
+        Config::Get().MarkDirty();
+        auto resolutions = Window::GetAvailableResolutions();
+        if (index >= 0 && index < static_cast<int>(resolutions.size()))
+        {
+            m_window.SetResolution(resolutions[index].width, resolutions[index].height);
+        }
+    };
+
+    callbacks.display.onVSyncChanged = [this](bool enabled) {
+        Config::Get().Display().vsyncEnabled = enabled;
+        Config::Get().MarkDirty();
         m_window.SetMenuChecked(MenuCommand::SettingsVSync, enabled);
     };
 
-    callbacks.onWireframe = [this](bool enabled) {
-        m_wireframeEnabled = enabled;
+    callbacks.display.onWireframeChanged = [this](bool enabled) {
+        Config::Get().Display().wireframeEnabled = enabled;
+        Config::Get().MarkDirty();
         m_window.SetMenuChecked(MenuCommand::ViewWireframe, enabled);
     };
 
-    callbacks.onDebugRendering = [this](bool enabled) {
-        m_debugRenderingEnabled = enabled;
+    callbacks.display.onDebugRenderingChanged = [this](bool enabled) {
+        Config::Get().Display().debugRenderingEnabled = enabled;
+        Config::Get().MarkDirty();
         if (m_debugPass) m_debugPass->SetEnabled(enabled);
         m_window.SetMenuChecked(MenuCommand::ViewDebugRendering, enabled);
     };
@@ -549,21 +607,48 @@ void Application::SetupUICallbacks()
 
 void Application::SyncUISettings()
 {
+    // Read from Config as the single source of truth
+    auto& cfg = Config::Get();
     UISettingsValues values;
-    values.postProcessEnabled = m_postProcessEnabled;
-    values.bloomEnabled = m_bloomEnabled;
-    values.bloomIntensity = m_postProcess ? m_postProcess->GetBloomIntensity() : 0.5f;
-    values.bloomThreshold = m_postProcess ? m_postProcess->GetBloomThreshold() : 1.5f;
-    values.toneMappingMode = m_postProcess ? static_cast<int>(m_postProcess->GetToneMapMode()) : 2;
-    values.exposure = m_postProcess ? m_postProcess->GetExposure() : 1.0f;
-    values.gamma = m_postProcess ? m_postProcess->GetGamma() : 2.2f;
-    values.ssaoEnabled = m_ssaoEnabled;
-    values.ssaoRadius = m_ssao ? m_ssao->GetRadius() : 0.5f;
-    values.ssaoIntensity = m_ssao ? m_ssao->GetIntensity() : 1.5f;
-    values.vsyncEnabled = m_vsyncEnabled;
-    values.wireframeEnabled = m_wireframeEnabled;
-    values.debugRenderingEnabled = m_debugRenderingEnabled;
+
+    // Graphics values from Config
+    values.graphics.postProcessEnabled = cfg.Graphics().postProcessEnabled;
+    values.graphics.bloomEnabled = cfg.Graphics().bloomEnabled;
+    values.graphics.bloomIntensity = cfg.Graphics().bloomIntensity;
+    values.graphics.bloomThreshold = cfg.Graphics().bloomThreshold;
+    values.graphics.toneMappingMode = cfg.Graphics().toneMappingMode;
+    values.graphics.exposure = cfg.Graphics().exposure;
+    values.graphics.gamma = cfg.Graphics().gamma;
+    values.graphics.ssaoEnabled = cfg.Graphics().ssaoEnabled;
+    values.graphics.ssaoRadius = cfg.Graphics().ssaoRadius;
+    values.graphics.ssaoIntensity = cfg.Graphics().ssaoIntensity;
+
+    // Display values from Config
+    values.display.displayMode = cfg.Display().displayMode;
+    values.display.resolutionIndex = cfg.Display().resolutionIndex;
+    values.display.vsyncEnabled = cfg.Display().vsyncEnabled;
+    values.display.wireframeEnabled = cfg.Display().wireframeEnabled;
+    values.display.debugRenderingEnabled = cfg.Display().debugRenderingEnabled;
+
     m_uiManager->SyncSettingsValues(values);
+}
+
+int Application::GetCurrentResolutionIndex() const
+{
+    auto resolutions = Window::GetAvailableResolutions();
+    uint32_t w = m_window.GetWidth();
+    uint32_t h = m_window.GetHeight();
+
+    for (int i = 0; i < static_cast<int>(resolutions.size()); i++)
+    {
+        if (resolutions[i].width == w && resolutions[i].height == h)
+        {
+            return i;
+        }
+    }
+
+    // Default to first resolution if no match
+    return 0;
 }
 
 void Application::OnResize(uint32_t width, uint32_t height)
@@ -571,18 +656,25 @@ void Application::OnResize(uint32_t width, uint32_t height)
     if (width == 0 || height == 0)
         return;
 
-    m_commandQueue->Flush();
+    // Don't resize if core resources aren't ready yet
+    if (!m_commandQueue || !m_swapChain)
+        return;
 
+    // Full D2D interop destruction before resize (required for D3D11On12)
     if (m_d2dInterop)
     {
-        m_d2dInterop->ReleaseWrappedRenderTargets();
+        m_d2dInterop->PrepareForResize();
     }
+
+    // Now flush to wait for all GPU work to complete
+    m_commandQueue->Flush();
 
     m_swapChain->Resize(width, height);
 
+    // Recreate D2D interop with new swapchain
     if (m_d2dInterop)
     {
-        m_d2dInterop->CreateWrappedRenderTargets(m_swapChain.get());
+        m_d2dInterop->RecreateAfterResize(m_swapChain.get());
     }
 
     if (m_uiManager)
@@ -622,23 +714,29 @@ void Application::OnResize(uint32_t width, uint32_t height)
 
 void Application::OnMenuCommand(MenuCommand cmd)
 {
+    auto& cfg = Config::Get();
+    bool checked = m_window.IsMenuChecked(cmd);
+
     switch (cmd)
     {
     case MenuCommand::ViewWireframe:
-        m_wireframeEnabled = m_window.IsMenuChecked(cmd);
+        cfg.Display().wireframeEnabled = checked;
+        cfg.MarkDirty();
         break;
 
     case MenuCommand::ViewDebugRendering:
-        m_debugRenderingEnabled = m_window.IsMenuChecked(cmd);
+        cfg.Display().debugRenderingEnabled = checked;
+        cfg.MarkDirty();
         if (m_debugPass)
-            m_debugPass->SetEnabled(m_debugRenderingEnabled);
+            m_debugPass->SetEnabled(checked);
         break;
 
     case MenuCommand::SettingsPostProcess:
-        m_postProcessEnabled = m_window.IsMenuChecked(cmd);
+        cfg.Graphics().postProcessEnabled = checked;
+        cfg.MarkDirty();
         if (m_postProcessPass)
-            m_postProcessPass->SetEnabled(m_postProcessEnabled);
-        if (m_postProcessEnabled)
+            m_postProcessPass->SetEnabled(checked);
+        if (checked)
         {
             m_mainPass->SetCustomRTV(m_postProcess->GetHDRRTV(), m_window.GetWidth(), m_window.GetHeight());
             m_skyboxPass->SetCustomRTV(m_postProcess->GetHDRRTV(), m_window.GetWidth(), m_window.GetHeight());
@@ -651,19 +749,22 @@ void Application::OnMenuCommand(MenuCommand cmd)
         break;
 
     case MenuCommand::SettingsBloom:
-        m_bloomEnabled = m_window.IsMenuChecked(cmd);
+        cfg.Graphics().bloomEnabled = checked;
+        cfg.MarkDirty();
         if (m_postProcess)
-            m_postProcess->SetBloomEnabled(m_bloomEnabled);
+            m_postProcess->SetBloomEnabled(checked);
         break;
 
     case MenuCommand::SettingsSSAO:
-        m_ssaoEnabled = m_window.IsMenuChecked(cmd);
+        cfg.Graphics().ssaoEnabled = checked;
+        cfg.MarkDirty();
         if (m_ssaoPass)
-            m_ssaoPass->SetEnabled(m_ssaoEnabled);
+            m_ssaoPass->SetEnabled(checked);
         break;
 
     case MenuCommand::SettingsVSync:
-        m_vsyncEnabled = m_window.IsMenuChecked(cmd);
+        cfg.Display().vsyncEnabled = checked;
+        cfg.MarkDirty();
         break;
 
     case MenuCommand::ViewFullscreen:
@@ -750,23 +851,104 @@ void Application::RenderMenu()
     m_d2dInterop->BeginD2DDraw(backBufferIndex);
     m_uiManager->RenderMainMenu(m_d2dInterop.get());
     m_d2dInterop->EndD2DDraw();
-    m_swapChain->Present(m_vsyncEnabled);
+    m_swapChain->Present(Config::Get().Display().vsyncEnabled);
 }
 
 void Application::UpdateLoading()
 {
-    if (InitializeGameResources())
+    // If already loaded, skip to game immediately
+    if (m_gameResourcesLoaded)
     {
+        m_loadingStage = 0;
         m_currentState = AppState::InGame;
         m_window.SetMouseCaptureEnabled(true);
         Input::Get().SetMouseCaptured(false);
+        return;
     }
-    else
+
+    // Staged loading - each frame processes one stage and renders progress
+    const int TOTAL_STAGES = 9;
+    bool success = true;
+
+    switch (m_loadingStage)
     {
+    case 0:
+        m_loadingStatus = L"Initializing...";
+        break;
+
+    case 1:
+        m_loadingStatus = L"Loading meshes and textures...";
+        success = InitializeRenderingResources();
+        break;
+
+    case 2:
+        m_loadingStatus = L"Setting up camera and lights...";
+        m_camera = std::make_unique<Camera>();
+        m_camera->SetPosition(XMFLOAT3(0.0f, 5.0f, -10.0f));
+        m_camera->SetPerspective(CAMERA_FOV, (float)m_window.GetWidth() / (float)m_window.GetHeight(), CAMERA_NEAR, CAMERA_FAR);
+        InitializeLights();
+        success = InitializeScene();
+        break;
+
+    case 3:
+        m_loadingStatus = L"Creating debug renderer...";
+        m_debugRenderer = std::make_unique<DebugRenderer>(m_device.get());
+        success = m_debugRenderer->Initialize();
+        if (success) m_debugRenderer->SetCamera(m_camera.get());
+        break;
+
+    case 4:
+        m_loadingStatus = L"Generating skybox...";
+        success = InitializeSkybox();
+        break;
+
+    case 5:
+        m_loadingStatus = L"Computing IBL maps...";
+        success = InitializeIBL();
+        if (success)
+        {
+            m_sceneRenderer->SetEnvironmentMap(m_skyCubemap.get());
+            m_sceneRenderer->SetIBL(m_ibl.get());
+        }
+        break;
+
+    case 6:
+        m_loadingStatus = L"Initializing SSAO...";
+        success = InitializeSSAO();
+        if (success) m_sceneRenderer->SetSSAO(m_ssao.get());
+        break;
+
+    case 7:
+        m_loadingStatus = L"Setting up post-processing...";
+        success = InitializePostProcess();
+        break;
+
+    case 8:
+        m_loadingStatus = L"Building render graph...";
+        success = InitializeRenderGraph();
+        if (success) ApplyConfigSettings();
+        break;
+
+    case 9:
+        // Loading complete
+        m_loadingStage = 0;
+        m_gameResourcesLoaded = true;
+        m_currentState = AppState::InGame;
+        m_window.SetMouseCaptureEnabled(true);
+        Input::Get().SetMouseCaptured(false);
+        return;
+    }
+
+    if (!success)
+    {
+        m_loadingStage = 0;
         MessageBox(m_window.GetHandle(), L"Failed to load game resources", L"Error", MB_OK);
         m_currentState = AppState::MainMenu;
         m_window.SetMouseCaptureEnabled(false);
+        return;
     }
+
+    m_loadingStage++;
 }
 
 void Application::RenderLoading()
@@ -774,9 +956,46 @@ void Application::RenderLoading()
     uint32_t backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
     m_d2dInterop->BeginD2DDraw(backBufferIndex);
     m_d2dInterop->Clear(0.02f, 0.02f, 0.05f, 1.0f);
+
+    float screenW = static_cast<float>(m_window.GetWidth());
+    float screenH = static_cast<float>(m_window.GetHeight());
+
+    const int TOTAL_STAGES = 9;
+    float progress = static_cast<float>(m_loadingStage) / static_cast<float>(TOTAL_STAGES);
+
+    // Draw "Loading" title
     m_d2dInterop->SetBrushColor(1.0f, 1.0f, 1.0f, 1.0f);
+    m_d2dInterop->DrawText(L"Loading", m_loadingTextFormat.Get(), 0.0f, -30.0f, screenW, screenH);
+
+    // Draw current status text (smaller, below title)
+    m_d2dInterop->SetBrushColor(0.7f, 0.7f, 0.8f, 1.0f);
+    m_d2dInterop->DrawText(m_loadingStatus, m_loadingTextFormat.Get(), 0.0f, 20.0f, screenW, screenH);
+
+    // Draw progress bar background
+    float barWidth = 400.0f;
+    float barHeight = 8.0f;
+    float barX = (screenW - barWidth) / 2.0f;
+    float barY = screenH / 2.0f + 60.0f;
+
+    m_d2dInterop->SetBrushColor(0.2f, 0.2f, 0.25f, 1.0f);
+    m_d2dInterop->FillRoundedRect(barX, barY, barWidth, barHeight, 4.0f);
+
+    // Draw progress bar fill
+    float fillWidth = barWidth * progress;
+    if (fillWidth > 0)
+    {
+        m_d2dInterop->SetBrushColor(0.3f, 0.6f, 1.0f, 1.0f);
+        m_d2dInterop->FillRoundedRect(barX, barY, fillWidth, barHeight, 4.0f);
+    }
+
+    // Draw percentage text
+    wchar_t percentText[16];
+    swprintf_s(percentText, L"%d%%", static_cast<int>(progress * 100));
+    m_d2dInterop->SetBrushColor(0.6f, 0.6f, 0.7f, 1.0f);
+    m_d2dInterop->DrawText(percentText, m_loadingTextFormat.Get(), 0.0f, 90.0f, screenW, screenH);
+
     m_d2dInterop->EndD2DDraw();
-    m_swapChain->Present(m_vsyncEnabled);
+    m_swapChain->Present(Config::Get().Display().vsyncEnabled);
 }
 
 void Application::UpdatePaused()
@@ -813,13 +1032,16 @@ void Application::UpdatePaused()
 
 void Application::RenderPaused()
 {
-    Render();
+    RenderScene();
+    m_commandQueue->Flush();
 
     uint32_t backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
     m_d2dInterop->BeginD2DDraw(backBufferIndex);
     m_uiManager->RenderPaused(m_d2dInterop.get());
     m_d2dInterop->EndD2DDraw();
-    m_swapChain->Present(m_vsyncEnabled);
+
+    m_swapChain->Present(Config::Get().Display().vsyncEnabled);
+    m_commandQueue->Flush();
 }
 
 void Application::UpdateSettings()
@@ -834,6 +1056,8 @@ void Application::UpdateSettings()
 
     if (m_uiManager->ShouldCloseSettings())
     {
+        // Save any dirty settings when closing
+        Config::Get().SaveIfDirty();
         m_currentState = m_settingsReturnState;
     }
     m_uiManager->ClearTransitionFlags();
@@ -845,7 +1069,7 @@ void Application::RenderSettings()
     m_d2dInterop->BeginD2DDraw(backBufferIndex);
     m_uiManager->RenderSettings(m_d2dInterop.get());
     m_d2dInterop->EndD2DDraw();
-    m_swapChain->Present(m_vsyncEnabled);
+    m_swapChain->Present(Config::Get().Display().vsyncEnabled);
 }
 
 void Application::Update()
@@ -866,7 +1090,7 @@ void Application::Update()
 
     m_sceneRenderer->Update(deltaTime);
 
-    if (m_debugRenderingEnabled)
+    if (Config::Get().Display().debugRenderingEnabled)
     {
         m_debugRenderer->Clear();
 
@@ -911,7 +1135,7 @@ void Application::Update()
     }
 }
 
-void Application::Render()
+void Application::RenderScene()
 {
     uint32_t backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
     ID3D12Resource* backBuffer = m_swapChain->GetBackBuffer(backBufferIndex);
@@ -941,54 +1165,41 @@ void Application::Render()
 
     ID3D12CommandList* commandLists[] = { m_commandList->GetD3D12CommandList() };
     m_commandQueue->ExecuteCommandLists(commandLists, 1);
+}
 
-    m_swapChain->Present(m_vsyncEnabled);
+void Application::Render()
+{
+    RenderScene();
 
+    m_swapChain->Present(Config::Get().Display().vsyncEnabled);
     m_commandQueue->Flush();
 }
 
 void Application::LoadConfig()
 {
-    Config::Get().Load("assets/config/settings.json");
+    // Get executable directory for settings file
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    std::wstring exeDir(exePath);
+    size_t lastSlash = exeDir.find_last_of(L"\\/");
+    if (lastSlash != std::wstring::npos)
+        exeDir = exeDir.substr(0, lastSlash + 1);
+    exeDir += L"settings.json";
 
-    // Apply loaded settings to member variables
-    auto& cfg = Config::Get();
-    m_postProcessEnabled = cfg.Graphics().postProcessEnabled;
-    m_bloomEnabled = cfg.Graphics().bloomEnabled;
-    m_ssaoEnabled = cfg.Graphics().ssaoEnabled;
-    m_vsyncEnabled = cfg.Display().vsyncEnabled;
-    m_wireframeEnabled = cfg.Debug().wireframeEnabled;
-    m_debugRenderingEnabled = cfg.Debug().debugRenderingEnabled;
+    // Convert wide string to narrow string
+    int size = WideCharToMultiByte(CP_UTF8, 0, exeDir.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string configPath(size - 1, 0);
+    WideCharToMultiByte(CP_UTF8, 0, exeDir.c_str(), -1, &configPath[0], size, nullptr, nullptr);
+
+    // Load config - Config singleton is now the single source of truth
+    Config::Get().Load(configPath);
 }
 
 void Application::SaveConfig()
 {
-    auto& cfg = Config::Get();
-
-    // Update config from current state
-    cfg.Graphics().postProcessEnabled = m_postProcessEnabled;
-    cfg.Graphics().bloomEnabled = m_bloomEnabled;
-    cfg.Graphics().ssaoEnabled = m_ssaoEnabled;
-    if (m_postProcess)
-    {
-        cfg.Graphics().bloomIntensity = m_postProcess->GetBloomIntensity();
-        cfg.Graphics().bloomThreshold = m_postProcess->GetBloomThreshold();
-        cfg.Graphics().toneMappingMode = static_cast<int>(m_postProcess->GetToneMapMode());
-        cfg.Graphics().exposure = m_postProcess->GetExposure();
-        cfg.Graphics().gamma = m_postProcess->GetGamma();
-    }
-    if (m_ssao)
-    {
-        cfg.Graphics().ssaoRadius = m_ssao->GetRadius();
-        cfg.Graphics().ssaoIntensity = m_ssao->GetIntensity();
-    }
-    cfg.Display().vsyncEnabled = m_vsyncEnabled;
-    cfg.Display().windowWidth = m_window.GetWidth();
-    cfg.Display().windowHeight = m_window.GetHeight();
-    cfg.Debug().wireframeEnabled = m_wireframeEnabled;
-    cfg.Debug().debugRenderingEnabled = m_debugRenderingEnabled;
-
-    Config::Get().Save("assets/config/settings.json");
+    // Config is already updated via callbacks when settings change
+    // Just save whatever is currently in Config (single source of truth)
+    Config::Get().Save();
 }
 
 void Application::ApplyConfigSettings()
@@ -1020,8 +1231,25 @@ void Application::ApplyConfigSettings()
     }
     if (m_debugPass)
     {
-        m_debugPass->SetEnabled(cfg.Debug().debugRenderingEnabled);
+        m_debugPass->SetEnabled(cfg.Display().debugRenderingEnabled);
     }
+}
+
+void Application::ApplyInitialDisplaySettings()
+{
+    // Apply display settings from config BEFORE window/swapchain creation
+    // This sets the initial window dimensions and display mode to avoid
+    // triggering a resize after swapchain is created
+    auto& cfg = Config::Get();
+    auto resolutions = Window::GetAvailableResolutions();
+    int resIdx = cfg.Display().resolutionIndex;
+
+    if (resIdx >= 0 && resIdx < static_cast<int>(resolutions.size()))
+    {
+        m_window.SetInitialDimensions(resolutions[resIdx].width, resolutions[resIdx].height);
+    }
+
+    m_window.SetInitialDisplayMode(static_cast<WindowDisplayMode>(cfg.Display().displayMode));
 }
 
 void Application::Shutdown()

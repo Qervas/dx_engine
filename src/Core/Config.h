@@ -1,13 +1,10 @@
 #pragma once
 
+#include <nlohmann/json.hpp>
 #include <string>
-#include <unordered_map>
 #include <fstream>
-#include <sstream>
 
-// Simple configuration manager for persisting settings
-// Supports basic JSON-like format: key = value pairs grouped by sections
-
+// Graphics settings - post-processing, effects
 struct GraphicsSettings
 {
     bool postProcessEnabled = true;
@@ -20,29 +17,35 @@ struct GraphicsSettings
     bool ssaoEnabled = true;
     float ssaoRadius = 0.5f;
     float ssaoIntensity = 1.5f;
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(GraphicsSettings,
+        postProcessEnabled, bloomEnabled, bloomIntensity, bloomThreshold,
+        toneMappingMode, exposure, gamma, ssaoEnabled, ssaoRadius, ssaoIntensity)
 };
 
+// Display settings - window mode, resolution
 struct DisplaySettings
 {
+    int displayMode = 0;      // 0=Windowed, 1=Fullscreen Borderless, 2=Fullscreen Exclusive
+    int resolutionIndex = 3;  // Index into resolution list (default 1920x1080)
     bool vsyncEnabled = true;
-    bool fullscreen = false;
-    int windowWidth = 1280;
-    int windowHeight = 720;
-};
-
-struct DebugSettings
-{
     bool wireframeEnabled = false;
     bool debugRenderingEnabled = true;
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DisplaySettings,
+        displayMode, resolutionIndex, vsyncEnabled, wireframeEnabled, debugRenderingEnabled)
 };
 
+// All application settings
 struct AppSettings
 {
     GraphicsSettings graphics;
     DisplaySettings display;
-    DebugSettings debug;
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(AppSettings, graphics, display)
 };
 
+// Singleton config manager
 class Config
 {
 public:
@@ -52,16 +55,21 @@ public:
         return instance;
     }
 
+    // File operations
     bool Load(const std::string& filepath);
+    bool Save();
     bool Save(const std::string& filepath);
-
-    AppSettings& GetSettings() { return m_settings; }
-    const AppSettings& GetSettings() const { return m_settings; }
 
     // Convenience accessors
     GraphicsSettings& Graphics() { return m_settings.graphics; }
     DisplaySettings& Display() { return m_settings.display; }
-    DebugSettings& Debug() { return m_settings.debug; }
+    const GraphicsSettings& Graphics() const { return m_settings.graphics; }
+    const DisplaySettings& Display() const { return m_settings.display; }
+
+    // Dirty tracking
+    void MarkDirty() { m_dirty = true; }
+    bool IsDirty() const { return m_dirty; }
+    void SaveIfDirty() { if (m_dirty) Save(); }
 
 private:
     Config() = default;
@@ -69,11 +77,7 @@ private:
     Config(const Config&) = delete;
     Config& operator=(const Config&) = delete;
 
-    // Simple parsing helpers
-    std::string Trim(const std::string& str);
-    bool ParseBool(const std::string& value);
-    int ParseInt(const std::string& value);
-    float ParseFloat(const std::string& value);
-
     AppSettings m_settings;
+    std::string m_filepath;
+    bool m_dirty = false;
 };

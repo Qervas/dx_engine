@@ -38,8 +38,12 @@ bool Window::Initialize()
     }
 
     // Calculate window size to get desired client area (with menu)
+    // Use fixed window style - no resize, no maximize (like Call of Duty)
+    // Resolution changes only through settings menu
+    constexpr DWORD windowStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+
     RECT windowRect = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
-    AdjustWindowRectEx(&windowRect, WS_OVERLAPPEDWINDOW, TRUE, 0);  // TRUE for menu
+    AdjustWindowRectEx(&windowRect, windowStyle, TRUE, 0);  // TRUE for menu
     int windowWidth = windowRect.right - windowRect.left;
     int windowHeight = windowRect.bottom - windowRect.top;
 
@@ -48,7 +52,7 @@ bool Window::Initialize()
         0,
         L"DXEngineWindowClass",
         m_title.c_str(),
-        WS_OVERLAPPEDWINDOW,
+        windowStyle,
         CW_USEDEFAULT, CW_USEDEFAULT,
         windowWidth, windowHeight,
         nullptr,
@@ -78,6 +82,14 @@ bool Window::Initialize()
 
     // Initialize input system with window handle
     Input::Get().SetWindowHandle(m_hwnd);
+
+    // Apply initial display mode if set (e.g., fullscreen from config)
+    // Clear resize flag after this since swapchain isn't created yet
+    if (m_initialDisplayMode != WindowDisplayMode::Windowed)
+    {
+        SetDisplayMode(m_initialDisplayMode);
+        m_wasResized = false;  // Clear flag - swapchain will be created at this size
+    }
 
     return true;
 }
@@ -239,19 +251,10 @@ LRESULT CALLBACK Window::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM 
             switch (wParam)
             {
             case VK_ESCAPE:
+                // Just release mouse capture - don't quit (let Application handle ESC)
+                if (Input::Get().IsMouseCaptured())
                 {
-                    // Toggle mouse capture with Escape
-                    Input& input = Input::Get();
-                    if (input.IsMouseCaptured())
-                    {
-                        input.SetMouseCaptured(false);
-                    }
-                    else
-                    {
-                        // If not captured, close the window
-                        window->m_shouldClose = true;
-                        PostQuitMessage(0);
-                    }
+                    Input::Get().SetMouseCaptured(false);
                 }
                 break;
             case VK_F1:
@@ -316,4 +319,90 @@ void Window::OnResize(uint32_t width, uint32_t height)
     {
         m_resizeCallback(width, height);
     }
+}
+
+void Window::SetDisplayMode(WindowDisplayMode mode)
+{
+    if (mode == m_displayMode)
+        return;
+
+    // Fixed window style - no resize, no maximize
+    constexpr DWORD windowStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+
+    if (mode == WindowDisplayMode::Windowed)
+    {
+        // Restore windowed mode with fixed style
+        SetWindowLongPtr(m_hwnd, GWL_STYLE, windowStyle);
+        SetWindowPos(m_hwnd, HWND_NOTOPMOST,
+            m_windowedRect.left, m_windowedRect.top,
+            m_windowedRect.right - m_windowedRect.left,
+            m_windowedRect.bottom - m_windowedRect.top,
+            SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        SetMenu(m_hwnd, m_menuBar);
+    }
+    else if (mode == WindowDisplayMode::FullscreenBorderless)
+    {
+        // Save current window position
+        GetWindowRect(m_hwnd, &m_windowedRect);
+
+        // Get monitor info for the monitor the window is on
+        HMONITOR hMonitor = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi = { sizeof(mi) };
+        GetMonitorInfo(hMonitor, &mi);
+
+        // Remove window decorations and menu
+        SetMenu(m_hwnd, nullptr);
+        SetWindowLongPtr(m_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+
+        // Set window to cover the entire monitor
+        SetWindowPos(m_hwnd, HWND_TOP,
+            mi.rcMonitor.left, mi.rcMonitor.top,
+            mi.rcMonitor.right - mi.rcMonitor.left,
+            mi.rcMonitor.bottom - mi.rcMonitor.top,
+            SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
+    // FullscreenExclusive would require DXGI swapchain changes
+
+    m_displayMode = mode;
+}
+
+void Window::SetResolution(uint32_t width, uint32_t height)
+{
+    if (m_displayMode == WindowDisplayMode::Windowed)
+    {
+        // Fixed window style - no resize, no maximize
+        constexpr DWORD windowStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+
+        // Calculate window size to get desired client area
+        RECT windowRect = { 0, 0, static_cast<LONG>(width), static_cast<LONG>(height) };
+        AdjustWindowRectEx(&windowRect, windowStyle, TRUE, 0);
+
+        int windowWidth = windowRect.right - windowRect.left;
+        int windowHeight = windowRect.bottom - windowRect.top;
+
+        // Center window on current monitor
+        HMONITOR hMonitor = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi = { sizeof(mi) };
+        GetMonitorInfo(hMonitor, &mi);
+
+        int x = mi.rcWork.left + (mi.rcWork.right - mi.rcWork.left - windowWidth) / 2;
+        int y = mi.rcWork.top + (mi.rcWork.bottom - mi.rcWork.top - windowHeight) / 2;
+
+        SetWindowPos(m_hwnd, nullptr, x, y, windowWidth, windowHeight, SWP_NOZORDER);
+    }
+}
+
+std::vector<Resolution> Window::GetAvailableResolutions()
+{
+    std::vector<Resolution> resolutions;
+
+    // Common resolutions
+    resolutions.push_back({ 1280, 720 });
+    resolutions.push_back({ 1366, 768 });
+    resolutions.push_back({ 1600, 900 });
+    resolutions.push_back({ 1920, 1080 });
+    resolutions.push_back({ 2560, 1440 });
+    resolutions.push_back({ 3840, 2160 });
+
+    return resolutions;
 }

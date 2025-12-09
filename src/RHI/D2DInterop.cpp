@@ -200,19 +200,140 @@ bool D2DInterop::CreateWrappedRenderTargets(SwapChain* swapChain)
 
 void D2DInterop::ReleaseWrappedRenderTargets()
 {
-    // Flush D3D11 context before releasing
+    // Flush and clear the D2D render target before releasing
+    if (m_d2dContext)
+    {
+        m_d2dContext->Flush();
+        m_d2dContext->SetTarget(nullptr);
+    }
+
+    // Release any wrapped resources back to D3D12 before destroying them
+    if (m_d3d11On12Device)
+    {
+        for (uint32_t i = 0; i < m_backBufferCount; ++i)
+        {
+            if (m_wrappedBackBuffers[i])
+            {
+                ID3D11Resource* resources[] = { m_wrappedBackBuffers[i].Get() };
+                m_d3d11On12Device->ReleaseWrappedResources(resources, 1);
+            }
+        }
+    }
+
+    // Clear all D3D11 device context state to release any cached references
     if (m_d3d11Context)
     {
+        m_d3d11Context->ClearState();
         m_d3d11Context->Flush();
     }
 
+    // Release D2D render targets first (they reference the wrapped buffers)
     for (uint32_t i = 0; i < MAX_BACK_BUFFERS; ++i)
     {
         m_d2dRenderTargets[i].Reset();
+    }
+
+    // Then release wrapped buffers
+    for (uint32_t i = 0; i < MAX_BACK_BUFFERS; ++i)
+    {
         m_wrappedBackBuffers[i].Reset();
     }
 
     m_backBufferCount = 0;
+}
+
+void D2DInterop::PrepareForResize()
+{
+    // Full cleanup - destroy everything related to D3D11On12
+    ReleaseWrappedRenderTargets();
+
+    // Release brush (it references D2D context)
+    m_brush.Reset();
+
+    // Release D2D resources
+    m_d2dContext.Reset();
+    m_d2dDevice.Reset();
+
+    // Clear and flush D3D11 context
+    if (m_d3d11Context)
+    {
+        m_d3d11Context->ClearState();
+        m_d3d11Context->Flush();
+    }
+
+    // Release D3D11On12 resources
+    m_d3d11Context.Reset();
+    m_d3d11On12Device.Reset();
+    m_d3d11Device.Reset();
+}
+
+bool D2DInterop::RecreateAfterResize(SwapChain* swapChain)
+{
+    HRESULT hr;
+
+    // 1. Recreate D3D11On12 device
+    UINT d3d11DeviceFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+#if defined(_DEBUG)
+    d3d11DeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+
+    ComPtr<ID3D11Device> d3d11Device;
+    ID3D12CommandQueue* queues[] = { m_commandQueue->GetD3D12CommandQueue() };
+
+    hr = D3D11On12CreateDevice(
+        m_device->GetD3D12Device(),
+        d3d11DeviceFlags,
+        nullptr, 0,
+        reinterpret_cast<IUnknown**>(queues), 1,
+        0,
+        &d3d11Device,
+        &m_d3d11Context,
+        nullptr
+    );
+
+    if (FAILED(hr))
+    {
+        return false;
+    }
+
+    hr = d3d11Device.As(&m_d3d11On12Device);
+    if (FAILED(hr))
+    {
+        return false;
+    }
+
+    m_d3d11Device = d3d11Device;
+
+    // 2. Recreate D2D device (factory is still valid)
+    ComPtr<IDXGIDevice> dxgiDevice;
+    hr = m_d3d11Device.As(&dxgiDevice);
+    if (FAILED(hr))
+    {
+        return false;
+    }
+
+    hr = m_d2dFactory->CreateDevice(dxgiDevice.Get(), &m_d2dDevice);
+    if (FAILED(hr))
+    {
+        return false;
+    }
+
+    // 3. Recreate D2D device context
+    hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_d2dContext);
+    if (FAILED(hr))
+    {
+        return false;
+    }
+
+    // 4. Recreate brush
+    hr = m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_brush);
+    if (FAILED(hr))
+    {
+        return false;
+    }
+
+    // 5. Create wrapped render targets for new swapchain
+    return CreateWrappedRenderTargets(swapChain);
 }
 
 void D2DInterop::BeginD2DDraw(uint32_t backBufferIndex)

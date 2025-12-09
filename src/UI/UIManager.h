@@ -10,44 +10,9 @@
 class D2DInterop;
 class Window;
 
-// Callbacks from UI to application for settings changes
-struct UISettingsCallbacks
-{
-    // Graphics
-    std::function<void(bool)> onPostProcessChanged;
-    std::function<void(bool)> onBloomChanged;
-    std::function<void(float)> onBloomIntensity;
-    std::function<void(float)> onBloomThreshold;
-    std::function<void(int)> onToneMapping;
-    std::function<void(float)> onExposure;
-    std::function<void(float)> onGamma;
-    std::function<void(bool)> onSSAOChanged;
-    std::function<void(float)> onSSAORadius;
-    std::function<void(float)> onSSAOIntensity;
-
-    // Display
-    std::function<void(bool)> onVSync;
-    std::function<void(bool)> onWireframe;
-    std::function<void(bool)> onDebugRendering;
-};
-
-// Current settings values for syncing UI state
-struct UISettingsValues
-{
-    bool postProcessEnabled = true;
-    bool bloomEnabled = true;
-    float bloomIntensity = 0.5f;
-    float bloomThreshold = 1.5f;
-    int toneMappingMode = 2;
-    float exposure = 1.0f;
-    float gamma = 2.2f;
-    bool ssaoEnabled = true;
-    float ssaoRadius = 0.5f;
-    float ssaoIntensity = 1.5f;
-    bool vsyncEnabled = true;
-    bool wireframeEnabled = false;
-    bool debugRenderingEnabled = true;
-};
+// Re-export settings types from SettingsMenu for Application use
+using UISettingsCallbacks = SettingsCallbacks;
+using UISettingsValues = SettingsValues;
 
 class UIManager
 {
@@ -87,13 +52,10 @@ public:
 
 private:
     void SetupMenuCallbacks();
-    void SetupSettingsCallbacks();
 
     std::unique_ptr<MainMenu> m_mainMenu;
     std::unique_ptr<PauseMenu> m_pauseMenu;
     std::unique_ptr<SettingsMenu> m_settingsMenu;
-
-    UISettingsCallbacks m_callbacks;
 
     // State transition flags
     bool m_shouldStartGame = false;

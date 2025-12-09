@@ -68,11 +68,13 @@ private:
     // UI callbacks
     void SetupUICallbacks();
     void SyncUISettings();
+    int GetCurrentResolutionIndex() const;
 
     // Config
     void LoadConfig();
     void SaveConfig();
     void ApplyConfigSettings();
+    void ApplyInitialDisplaySettings();
 
     // Event handlers
     void OnResize(uint32_t width, uint32_t height);
@@ -90,6 +92,7 @@ private:
     void RenderSettings();
     void RenderLoading();
     void RenderPaused();
+    void RenderScene();  // Renders 3D scene without presenting
     void Render();
 
     void Shutdown();
@@ -106,6 +109,9 @@ private:
     AppState m_currentState = AppState::MainMenu;
     AppState m_settingsReturnState = AppState::MainMenu;  // Where to return after closing settings
     bool m_gameResourcesLoaded = false;
+    int m_loadingStage = 0;       // Current loading stage (0 = not started)
+    ComPtr<IDWriteTextFormat> m_loadingTextFormat;
+    std::wstring m_loadingStatus; // Current loading status text
 
     // D2D/DirectWrite interop for UI rendering
     std::unique_ptr<D2DInterop> m_d2dInterop;
@@ -169,11 +175,6 @@ private:
     // Scene lights
     std::vector<Light> m_lights;
 
-    // Render settings
-    bool m_wireframeEnabled = false;
-    bool m_debugRenderingEnabled = true;
-    bool m_postProcessEnabled = true;
-    bool m_bloomEnabled = true;
-    bool m_ssaoEnabled = true;
-    bool m_vsyncEnabled = true;
+    // Note: Render settings are stored in Config singleton (single source of truth)
+    // Access via Config::Get().Graphics() and Config::Get().Display()
 };

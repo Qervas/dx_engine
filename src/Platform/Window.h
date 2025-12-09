@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <functional>
+#include <vector>
 
 // Menu command IDs
 enum class MenuCommand : UINT
@@ -21,6 +22,19 @@ enum class MenuCommand : UINT
     SettingsBloom = 3002,
     SettingsSSAO = 3003,
     SettingsVSync = 3004
+};
+
+enum class WindowDisplayMode
+{
+    Windowed = 0,
+    FullscreenBorderless = 1,
+    FullscreenExclusive = 2  // Not fully implemented yet
+};
+
+struct Resolution
+{
+    uint32_t width;
+    uint32_t height;
 };
 
 class Window
@@ -49,6 +63,16 @@ public:
     void SetMouseCaptureEnabled(bool enabled) { m_mouseCaptureEnabled = enabled; }
     bool IsMouseCaptureEnabled() const { return m_mouseCaptureEnabled; }
 
+    // Display mode
+    void SetDisplayMode(WindowDisplayMode mode);
+    WindowDisplayMode GetDisplayMode() const { return m_displayMode; }
+    void SetResolution(uint32_t width, uint32_t height);
+    static std::vector<Resolution> GetAvailableResolutions();
+
+    // Set initial dimensions before Initialize() - avoids resize during startup
+    void SetInitialDimensions(uint32_t width, uint32_t height) { m_width = width; m_height = height; }
+    void SetInitialDisplayMode(WindowDisplayMode mode) { m_initialDisplayMode = mode; }
+
     // Callbacks
     using ResizeCallback = std::function<void(uint32_t, uint32_t)>;
     using MenuCallback = std::function<void(MenuCommand)>;
@@ -70,6 +94,9 @@ private:
     bool m_shouldClose = false;
     bool m_wasResized = false;
     bool m_mouseCaptureEnabled = true;  // Set to false in menu mode
+    WindowDisplayMode m_displayMode = WindowDisplayMode::Windowed;
+    WindowDisplayMode m_initialDisplayMode = WindowDisplayMode::Windowed;  // Set before Initialize()
+    RECT m_windowedRect = {};  // Saved window rect for restoring from fullscreen
     ResizeCallback m_resizeCallback;
     MenuCallback m_menuCallback;
 };

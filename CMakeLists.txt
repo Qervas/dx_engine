@@ -72,6 +72,13 @@ add_executable(dx_engine
     src/UI/UIManager.h
     src/UI/UIManager.cpp
 
+    # UI Settings (submodules)
+    src/UI/Settings/ISettingsTab.h
+    src/UI/Settings/GraphicsSettingsTab.h
+    src/UI/Settings/GraphicsSettingsTab.cpp
+    src/UI/Settings/DisplaySettingsTab.h
+    src/UI/Settings/DisplaySettingsTab.cpp
+
     # Renderer
     src/Renderer/Camera.h
     src/Renderer/Camera.cpp
@@ -147,6 +154,7 @@ add_executable(dx_engine
 
 # Find packages
 find_package(Stb REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 # Define UNICODE for wide character support
 target_compile_definitions(dx_engine PRIVATE UNICODE _UNICODE)
@@ -162,6 +170,7 @@ target_link_libraries(dx_engine
     d3d11.lib
     d2d1.lib
     dwrite.lib
+    nlohmann_json::nlohmann_json
 )
 
 # Set subsystem to Windows

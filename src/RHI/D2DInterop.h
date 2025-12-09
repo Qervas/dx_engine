@@ -24,6 +24,10 @@ public:
     bool CreateWrappedRenderTargets(SwapChain* swapChain);
     void ReleaseWrappedRenderTargets();
 
+    // Full recreation for resize (destroys and recreates D3D11On12 resources)
+    void PrepareForResize();
+    bool RecreateAfterResize(SwapChain* swapChain);
+
     // Begin/End frame for D2D rendering
     void BeginD2DDraw(uint32_t backBufferIndex);
     void EndD2DDraw();

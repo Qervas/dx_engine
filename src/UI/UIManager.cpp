@@ -47,55 +47,7 @@ void UIManager::Shutdown()
 
 void UIManager::SetupMenuCallbacks()
 {
-    // Main menu doesn't need internal callbacks - we check actions directly
-    // Same for pause menu
-}
-
-void UIManager::SetupSettingsCallbacks()
-{
-    SettingsCallbacks callbacks;
-
-    callbacks.onPostProcessChanged = [this](bool v) {
-        if (m_callbacks.onPostProcessChanged) m_callbacks.onPostProcessChanged(v);
-    };
-    callbacks.onBloomChanged = [this](bool v) {
-        if (m_callbacks.onBloomChanged) m_callbacks.onBloomChanged(v);
-    };
-    callbacks.onBloomIntensityChanged = [this](float v) {
-        if (m_callbacks.onBloomIntensity) m_callbacks.onBloomIntensity(v);
-    };
-    callbacks.onBloomThresholdChanged = [this](float v) {
-        if (m_callbacks.onBloomThreshold) m_callbacks.onBloomThreshold(v);
-    };
-    callbacks.onToneMappingChanged = [this](int v) {
-        if (m_callbacks.onToneMapping) m_callbacks.onToneMapping(v);
-    };
-    callbacks.onExposureChanged = [this](float v) {
-        if (m_callbacks.onExposure) m_callbacks.onExposure(v);
-    };
-    callbacks.onGammaChanged = [this](float v) {
-        if (m_callbacks.onGamma) m_callbacks.onGamma(v);
-    };
-    callbacks.onSSAOChanged = [this](bool v) {
-        if (m_callbacks.onSSAOChanged) m_callbacks.onSSAOChanged(v);
-    };
-    callbacks.onSSAORadiusChanged = [this](float v) {
-        if (m_callbacks.onSSAORadius) m_callbacks.onSSAORadius(v);
-    };
-    callbacks.onSSAOIntensityChanged = [this](float v) {
-        if (m_callbacks.onSSAOIntensity) m_callbacks.onSSAOIntensity(v);
-    };
-    callbacks.onVSyncChanged = [this](bool v) {
-        if (m_callbacks.onVSync) m_callbacks.onVSync(v);
-    };
-    callbacks.onWireframeChanged = [this](bool v) {
-        if (m_callbacks.onWireframe) m_callbacks.onWireframe(v);
-    };
-    callbacks.onDebugRenderingChanged = [this](bool v) {
-        if (m_callbacks.onDebugRendering) m_callbacks.onDebugRendering(v);
-    };
-
-    m_settingsMenu->SetCallbacks(callbacks);
+    // Main menu and pause menu don't need internal callbacks - we check actions directly
 }
 
 void UIManager::UpdateMainMenu(float deltaTime, float mouseX, float mouseY, bool mouseClicked)
@@ -201,25 +153,12 @@ void UIManager::OnResize(uint32_t width, uint32_t height)
 
 void UIManager::SetSettingsCallbacks(const UISettingsCallbacks& callbacks)
 {
-    m_callbacks = callbacks;
-    SetupSettingsCallbacks();
+    // Directly pass callbacks to SettingsMenu (they use the same type now)
+    m_settingsMenu->SetCallbacks(callbacks);
 }
 
 void UIManager::SyncSettingsValues(const UISettingsValues& values)
 {
-    SettingsValues settingsValues;
-    settingsValues.postProcessEnabled = values.postProcessEnabled;
-    settingsValues.bloomEnabled = values.bloomEnabled;
-    settingsValues.bloomIntensity = values.bloomIntensity;
-    settingsValues.bloomThreshold = values.bloomThreshold;
-    settingsValues.toneMappingMode = values.toneMappingMode;
-    settingsValues.exposure = values.exposure;
-    settingsValues.gamma = values.gamma;
-    settingsValues.ssaoEnabled = values.ssaoEnabled;
-    settingsValues.ssaoRadius = values.ssaoRadius;
-    settingsValues.ssaoIntensity = values.ssaoIntensity;
-    settingsValues.vsyncEnabled = values.vsyncEnabled;
-    settingsValues.wireframeEnabled = values.wireframeEnabled;
-    settingsValues.debugRenderingEnabled = values.debugRenderingEnabled;
-    m_settingsMenu->SetValues(settingsValues);
+    // Directly pass values to SettingsMenu (they use the same type now)
+    m_settingsMenu->SetValues(values);
 }

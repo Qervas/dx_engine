@@ -18,6 +18,8 @@ add_executable(dx_engine
     src/Core/AppState.h
     src/Core/Application.h
     src/Core/Application.cpp
+    src/Core/Config.h
+    src/Core/Config.cpp
 
     # RHI (Render Hardware Interface)
     src/RHI/Device.h
@@ -67,8 +69,6 @@ add_executable(dx_engine
     src/UI/PauseMenu.cpp
     src/UI/SettingsMenu.h
     src/UI/SettingsMenu.cpp
-    src/UI/QuickSettings.h
-    src/UI/QuickSettings.cpp
     src/UI/UIManager.h
     src/UI/UIManager.cpp
 
@@ -177,4 +177,12 @@ add_custom_command(TARGET dx_engine POST_BUILD
     ${CMAKE_SOURCE_DIR}/shaders
     $<TARGET_FILE_DIR:dx_engine>/shaders
     COMMENT "Copying shaders to build directory"
+)
+
+# Copy assets to build directory
+add_custom_command(TARGET dx_engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/assets
+    $<TARGET_FILE_DIR:dx_engine>/assets
+    COMMENT "Copying assets to build directory"
 )

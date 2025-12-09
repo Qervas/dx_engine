@@ -3,7 +3,6 @@
 #include "MainMenu.h"
 #include "PauseMenu.h"
 #include "SettingsMenu.h"
-#include "QuickSettings.h"
 #include "../Core/AppState.h"
 #include <memory>
 #include <functional>
@@ -69,13 +68,6 @@ public:
     void UpdatePaused(float deltaTime, float mouseX, float mouseY, bool mouseClicked);
     void RenderPaused(D2DInterop* d2d);
 
-    void UpdateQuickSettings(float deltaTime, float mouseX, float mouseY, bool mouseDown, bool mouseClicked);
-    void RenderQuickSettings(D2DInterop* d2d);
-
-    // Quick settings visibility
-    bool IsQuickSettingsVisible() const;
-    void ToggleQuickSettings();
-
     // State transition queries
     bool ShouldStartGame() const { return m_shouldStartGame; }
     bool ShouldOpenSettings() const { return m_shouldOpenSettings; }
@@ -96,12 +88,10 @@ public:
 private:
     void SetupMenuCallbacks();
     void SetupSettingsCallbacks();
-    void SetupQuickSettingsCallbacks();
 
     std::unique_ptr<MainMenu> m_mainMenu;
     std::unique_ptr<PauseMenu> m_pauseMenu;
     std::unique_ptr<SettingsMenu> m_settingsMenu;
-    std::unique_ptr<QuickSettings> m_quickSettings;
 
     UISettingsCallbacks m_callbacks;
 

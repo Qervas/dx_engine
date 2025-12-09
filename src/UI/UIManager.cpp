@@ -33,13 +33,6 @@ bool UIManager::Initialize(D2DInterop* d2dInterop, uint32_t screenWidth, uint32_
         return false;
     }
 
-    // Initialize quick settings overlay
-    m_quickSettings = std::make_unique<QuickSettings>();
-    if (!m_quickSettings->Initialize(d2dInterop, screenWidth, screenHeight))
-    {
-        return false;
-    }
-
     SetupMenuCallbacks();
 
     return true;
@@ -47,7 +40,6 @@ bool UIManager::Initialize(D2DInterop* d2dInterop, uint32_t screenWidth, uint32_
 
 void UIManager::Shutdown()
 {
-    m_quickSettings.reset();
     m_settingsMenu.reset();
     m_pauseMenu.reset();
     m_mainMenu.reset();
@@ -104,29 +96,6 @@ void UIManager::SetupSettingsCallbacks()
     };
 
     m_settingsMenu->SetCallbacks(callbacks);
-}
-
-void UIManager::SetupQuickSettingsCallbacks()
-{
-    QuickSettingsCallbacks callbacks;
-
-    callbacks.onBloomChanged = [this](bool v) {
-        if (m_callbacks.onBloomChanged) m_callbacks.onBloomChanged(v);
-    };
-    callbacks.onSSAOChanged = [this](bool v) {
-        if (m_callbacks.onSSAOChanged) m_callbacks.onSSAOChanged(v);
-    };
-    callbacks.onPostProcessChanged = [this](bool v) {
-        if (m_callbacks.onPostProcessChanged) m_callbacks.onPostProcessChanged(v);
-    };
-    callbacks.onWireframeChanged = [this](bool v) {
-        if (m_callbacks.onWireframe) m_callbacks.onWireframe(v);
-    };
-    callbacks.onExposureChanged = [this](float v) {
-        if (m_callbacks.onExposure) m_callbacks.onExposure(v);
-    };
-
-    m_quickSettings->SetCallbacks(callbacks);
 }
 
 void UIManager::UpdateMainMenu(float deltaTime, float mouseX, float mouseY, bool mouseClicked)
@@ -194,6 +163,9 @@ void UIManager::UpdatePaused(float deltaTime, float mouseX, float mouseY, bool m
     case PauseAction::Resume:
         m_shouldResume = true;
         break;
+    case PauseAction::Settings:
+        m_shouldOpenSettings = true;
+        break;
     case PauseAction::MainMenu:
         m_shouldReturnToMenu = true;
         break;
@@ -208,36 +180,6 @@ void UIManager::UpdatePaused(float deltaTime, float mouseX, float mouseY, bool m
 void UIManager::RenderPaused(D2DInterop* d2d)
 {
     m_pauseMenu->Render(d2d);
-}
-
-void UIManager::UpdateQuickSettings(float deltaTime, float mouseX, float mouseY, bool mouseDown, bool mouseClicked)
-{
-    if (m_quickSettings->IsVisible())
-    {
-        m_quickSettings->HandleInput(mouseX, mouseY, mouseDown, mouseClicked);
-        m_quickSettings->Update(deltaTime);
-    }
-}
-
-void UIManager::RenderQuickSettings(D2DInterop* d2d)
-{
-    if (m_quickSettings->IsVisible())
-    {
-        m_quickSettings->Render(d2d);
-    }
-}
-
-bool UIManager::IsQuickSettingsVisible() const
-{
-    return m_quickSettings && m_quickSettings->IsVisible();
-}
-
-void UIManager::ToggleQuickSettings()
-{
-    if (m_quickSettings)
-    {
-        m_quickSettings->Toggle();
-    }
 }
 
 void UIManager::ClearTransitionFlags()
@@ -255,19 +197,16 @@ void UIManager::OnResize(uint32_t width, uint32_t height)
     if (m_mainMenu) m_mainMenu->OnResize(width, height);
     if (m_pauseMenu) m_pauseMenu->OnResize(width, height);
     if (m_settingsMenu) m_settingsMenu->OnResize(width, height);
-    if (m_quickSettings) m_quickSettings->OnResize(width, height);
 }
 
 void UIManager::SetSettingsCallbacks(const UISettingsCallbacks& callbacks)
 {
     m_callbacks = callbacks;
     SetupSettingsCallbacks();
-    SetupQuickSettingsCallbacks();
 }
 
 void UIManager::SyncSettingsValues(const UISettingsValues& values)
 {
-    // Sync settings menu
     SettingsValues settingsValues;
     settingsValues.postProcessEnabled = values.postProcessEnabled;
     settingsValues.bloomEnabled = values.bloomEnabled;
@@ -283,13 +222,4 @@ void UIManager::SyncSettingsValues(const UISettingsValues& values)
     settingsValues.wireframeEnabled = values.wireframeEnabled;
     settingsValues.debugRenderingEnabled = values.debugRenderingEnabled;
     m_settingsMenu->SetValues(settingsValues);
-
-    // Sync quick settings
-    QuickSettingsValues quickValues;
-    quickValues.bloomEnabled = values.bloomEnabled;
-    quickValues.ssaoEnabled = values.ssaoEnabled;
-    quickValues.postProcessEnabled = values.postProcessEnabled;
-    quickValues.wireframeEnabled = values.wireframeEnabled;
-    quickValues.exposure = values.exposure;
-    m_quickSettings->SetValues(quickValues);
 }

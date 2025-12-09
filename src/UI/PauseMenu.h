@@ -12,6 +12,7 @@ enum class PauseAction
 {
     None,
     Resume,
+    Settings,
     MainMenu,
     Exit
 };

@@ -73,6 +73,12 @@ void PauseMenu::CreateButtons()
     resumeBtn->SetOnClick([this]() { m_lastAction = PauseAction::Resume; });
     m_buttons.push_back(std::move(resumeBtn));
 
+    // Settings button
+    auto settingsBtn = std::make_unique<UIButton>(L"Settings");
+    settingsBtn->SetTextFormat(m_buttonFormat.Get());
+    settingsBtn->SetOnClick([this]() { m_lastAction = PauseAction::Settings; });
+    m_buttons.push_back(std::move(settingsBtn));
+
     // Main Menu button
     auto menuBtn = std::make_unique<UIButton>(L"Main Menu");
     menuBtn->SetTextFormat(m_buttonFormat.Get());
@@ -141,7 +147,7 @@ void PauseMenu::Render(D2DInterop* d2dInterop)
 
     // Draw pause menu background panel
     const float panelWidth = 350.0f;
-    const float panelHeight = 320.0f;
+    const float panelHeight = 380.0f;
     float panelX = (static_cast<float>(m_screenWidth) - panelWidth) / 2.0f;
     float panelY = (static_cast<float>(m_screenHeight) - panelHeight) / 2.0f;
 

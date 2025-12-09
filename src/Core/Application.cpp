@@ -35,6 +35,9 @@ Application::~Application()
 
 bool Application::Initialize()
 {
+    // Load config first
+    LoadConfig();
+
     if (!InitializeMinimal())
     {
         return false;
@@ -143,6 +146,9 @@ bool Application::InitializeGameResources()
 
     if (!InitializeRenderGraph())
         return false;
+
+    // Apply loaded config settings to all systems
+    ApplyConfigSettings();
 
     m_gameResourcesLoaded = true;
     return true;
@@ -727,6 +733,7 @@ void Application::UpdateMenu()
     }
     else if (m_uiManager->ShouldOpenSettings())
     {
+        m_settingsReturnState = AppState::MainMenu;
         m_currentState = AppState::Settings;
         SyncUISettings();
     }
@@ -774,12 +781,6 @@ void Application::RenderLoading()
 
 void Application::UpdatePaused()
 {
-    if (Input::Get().IsKeyPressed(Key::Escape))
-    {
-        m_currentState = AppState::InGame;
-        return;
-    }
-
     auto& input = Input::Get();
     float mouseX = static_cast<float>(input.GetMouseX());
     float mouseY = static_cast<float>(input.GetMouseY());
@@ -791,6 +792,12 @@ void Application::UpdatePaused()
     {
         m_currentState = AppState::InGame;
         m_window.SetMouseCaptureEnabled(true);
+    }
+    else if (m_uiManager->ShouldOpenSettings())
+    {
+        m_settingsReturnState = AppState::Paused;
+        m_currentState = AppState::Settings;
+        SyncUISettings();
     }
     else if (m_uiManager->ShouldReturnToMenu())
     {
@@ -827,7 +834,7 @@ void Application::UpdateSettings()
 
     if (m_uiManager->ShouldCloseSettings())
     {
-        m_currentState = AppState::MainMenu;
+        m_currentState = m_settingsReturnState;
     }
     m_uiManager->ClearTransitionFlags();
 }
@@ -853,25 +860,6 @@ void Application::Update()
             m_window.SetMouseCaptureEnabled(false);
             return;
         }
-    }
-
-    if (Input::Get().IsKeyPressed(Key::F10))
-    {
-        m_uiManager->ToggleQuickSettings();
-        if (m_uiManager->IsQuickSettingsVisible())
-        {
-            SyncUISettings();
-        }
-    }
-
-    if (m_uiManager->IsQuickSettingsVisible())
-    {
-        auto& input = Input::Get();
-        float mouseX = static_cast<float>(input.GetMouseX());
-        float mouseY = static_cast<float>(input.GetMouseY());
-        bool mouseDown = input.IsMouseButtonDown(MouseButton::Left);
-        bool mouseClicked = input.IsMouseButtonPressed(MouseButton::Left);
-        m_uiManager->UpdateQuickSettings(m_timer.GetDeltaTime(), mouseX, mouseY, mouseDown, mouseClicked);
     }
 
     m_camera->ProcessFPSInput(deltaTime, 5.0f, 0.003f);
@@ -954,22 +942,93 @@ void Application::Render()
     ID3D12CommandList* commandLists[] = { m_commandList->GetD3D12CommandList() };
     m_commandQueue->ExecuteCommandLists(commandLists, 1);
 
-    if (m_uiManager->IsQuickSettingsVisible())
-    {
-        m_commandQueue->Flush();
-
-        m_d2dInterop->BeginD2DDraw(backBufferIndex);
-        m_uiManager->RenderQuickSettings(m_d2dInterop.get());
-        m_d2dInterop->EndD2DDraw();
-    }
-
     m_swapChain->Present(m_vsyncEnabled);
 
     m_commandQueue->Flush();
 }
 
+void Application::LoadConfig()
+{
+    Config::Get().Load("assets/config/settings.json");
+
+    // Apply loaded settings to member variables
+    auto& cfg = Config::Get();
+    m_postProcessEnabled = cfg.Graphics().postProcessEnabled;
+    m_bloomEnabled = cfg.Graphics().bloomEnabled;
+    m_ssaoEnabled = cfg.Graphics().ssaoEnabled;
+    m_vsyncEnabled = cfg.Display().vsyncEnabled;
+    m_wireframeEnabled = cfg.Debug().wireframeEnabled;
+    m_debugRenderingEnabled = cfg.Debug().debugRenderingEnabled;
+}
+
+void Application::SaveConfig()
+{
+    auto& cfg = Config::Get();
+
+    // Update config from current state
+    cfg.Graphics().postProcessEnabled = m_postProcessEnabled;
+    cfg.Graphics().bloomEnabled = m_bloomEnabled;
+    cfg.Graphics().ssaoEnabled = m_ssaoEnabled;
+    if (m_postProcess)
+    {
+        cfg.Graphics().bloomIntensity = m_postProcess->GetBloomIntensity();
+        cfg.Graphics().bloomThreshold = m_postProcess->GetBloomThreshold();
+        cfg.Graphics().toneMappingMode = static_cast<int>(m_postProcess->GetToneMapMode());
+        cfg.Graphics().exposure = m_postProcess->GetExposure();
+        cfg.Graphics().gamma = m_postProcess->GetGamma();
+    }
+    if (m_ssao)
+    {
+        cfg.Graphics().ssaoRadius = m_ssao->GetRadius();
+        cfg.Graphics().ssaoIntensity = m_ssao->GetIntensity();
+    }
+    cfg.Display().vsyncEnabled = m_vsyncEnabled;
+    cfg.Display().windowWidth = m_window.GetWidth();
+    cfg.Display().windowHeight = m_window.GetHeight();
+    cfg.Debug().wireframeEnabled = m_wireframeEnabled;
+    cfg.Debug().debugRenderingEnabled = m_debugRenderingEnabled;
+
+    Config::Get().Save("assets/config/settings.json");
+}
+
+void Application::ApplyConfigSettings()
+{
+    auto& cfg = Config::Get();
+
+    // Apply settings to systems
+    if (m_postProcess)
+    {
+        m_postProcess->SetBloomEnabled(cfg.Graphics().bloomEnabled);
+        m_postProcess->SetBloomIntensity(cfg.Graphics().bloomIntensity);
+        m_postProcess->SetBloomThreshold(cfg.Graphics().bloomThreshold);
+        m_postProcess->SetToneMapMode(static_cast<ToneMapMode>(cfg.Graphics().toneMappingMode));
+        m_postProcess->SetExposure(cfg.Graphics().exposure);
+        m_postProcess->SetGamma(cfg.Graphics().gamma);
+    }
+    if (m_postProcessPass)
+    {
+        m_postProcessPass->SetEnabled(cfg.Graphics().postProcessEnabled);
+    }
+    if (m_ssao)
+    {
+        m_ssao->SetRadius(cfg.Graphics().ssaoRadius);
+        m_ssao->SetIntensity(cfg.Graphics().ssaoIntensity);
+    }
+    if (m_ssaoPass)
+    {
+        m_ssaoPass->SetEnabled(cfg.Graphics().ssaoEnabled);
+    }
+    if (m_debugPass)
+    {
+        m_debugPass->SetEnabled(cfg.Debug().debugRenderingEnabled);
+    }
+}
+
 void Application::Shutdown()
 {
+    // Save settings before shutdown
+    SaveConfig();
+
     if (m_commandQueue)
     {
         m_commandQueue->Flush();

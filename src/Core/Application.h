@@ -29,6 +29,7 @@
 #include "../UI/UIManager.h"
 #include "Timer.h"
 #include "AppState.h"
+#include "Config.h"
 #include <memory>
 #include <vector>
 
@@ -68,6 +69,11 @@ private:
     void SetupUICallbacks();
     void SyncUISettings();
 
+    // Config
+    void LoadConfig();
+    void SaveConfig();
+    void ApplyConfigSettings();
+
     // Event handlers
     void OnResize(uint32_t width, uint32_t height);
     void OnMenuCommand(MenuCommand cmd);
@@ -98,6 +104,7 @@ private:
 
     // Application state
     AppState m_currentState = AppState::MainMenu;
+    AppState m_settingsReturnState = AppState::MainMenu;  // Where to return after closing settings
     bool m_gameResourcesLoaded = false;
 
     // D2D/DirectWrite interop for UI rendering
